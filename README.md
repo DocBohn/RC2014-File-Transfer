@@ -49,6 +49,26 @@ On the other hand, if you want to copy/paste a *package* encoding then for now I
 the [File Packager on the RC2014 website](https://rc2014.co.uk/filepackage/). (*n.b.*, the File Packager on the RC2014
 website does not convert line terminators.)
 
-### Examples
+### Inferring the File Format
+
+- If you specify the file format using `-ff` or `--file-format` then `update.py` will use that format, unless...
+- If you specify a *plaintext* transmission (using `-tf plaintext` or `--transmission-format plaintext`) then the file format will be set to *text* **even if you set the file format to *binary* using `-ff binary` or `--file-format binary`**.
+
+If neither of those cases are at play, then `update.py` will infer the file type from the file extension if possible or from the file contents otherwise.
+
+- `.BIN` and `.COM` files are assumed to be *binary*.
+- Source code is assumed to be *text*.
+  - Assembly (`.ASM`)
+  - Ada (`.ADB`, `.ADS`)
+  - BASIC (`.BAS`)
+  - C (`.C`, `.H`)
+  - FORTRAN (`.F`, `.F77`, `.FOR`)
+  - Forth (`.F`, `.FTH`, `.FS`, `.4TH`)
+  - Pascal (`.PAS`)
+- `.BAK` and `.TXT` files are assumed to be *text*.
+- If the file's first kilobyte can be interpreted as valid UTF-8, then the file is assumed to be *text*.
+- Otherwise, the file is assumed to be *binary*.
+
+## Examples
 
 ***TODO***

@@ -43,11 +43,12 @@ SOFTWARE.
 
 import argparse
 import functools
+import os
 import sys
 from enum import StrEnum
 from inspect import currentframe, getframeinfo
 from time import sleep, time
-from typing import Dict, Iterable, Optional, Set, Union
+from typing import Dict, Iterable, List, Optional, Set, Union
 
 import serial  # from the pyserial package (https://pyserial.readthedocs.io/)
 
@@ -108,6 +109,7 @@ def upload_string(string: str, destination: Optional[serial.Serial], ms_delay: i
                                      f'first_nibble={first_nibble}, second_nibble={second_nibble})')
         else:
             print(character, end='')
+        sys.stdout.flush()
         if destination is not None:
             destination.write(character.encode())
             destination.flush()
@@ -214,8 +216,35 @@ def get_formats(filename: str, transmission_format: str, file_format: Optional[s
     return formats
 
 
+def truncate_filename(filename: str) -> str:
+    _, filename = os.path.split(filename)
+    name, extension = os.path.splitext(filename)
+    name = name.replace('.', '_')
+    if len(name) > 8:
+        name = name[:8].rstrip('_')
+    if len(extension) > 4:
+        extension = extension[:4]
+    proposed_filename: str = f'{name}{extension}'.upper()
+    new_filename: str = ''
+    if proposed_filename == filename.upper():
+        new_filename = proposed_filename
+    else:
+        while new_filename == '':
+            user_filename_tokens: List[str]
+            user_filename_tokens = (input(f'{filename} needs to be renamed to 8.3 format [{proposed_filename}]: ')
+                                    .split('.'))
+            if len(user_filename_tokens) == 0:
+                new_filename = proposed_filename
+            elif (1 <= len(user_filename_tokens) <= 2
+                  and len(user_filename_tokens[0]) <= 8
+                  and len(user_filename_tokens[1]) <= 3):
+                new_filename = '.'.join(user_filename_tokens).upper()
+            else:
+                print(f'{'.'.join(user_filename_tokens).upper()} is not a valid filename.')
+    return new_filename
+
+
 def main():
-    # TODO: truncate filename.ext when necessary
     argument_parser = argparse.ArgumentParser(
         prog='upload',
         description='Upload file to RC2014 or similar retrocomputer'
@@ -243,7 +272,8 @@ def main():
                                  choices=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
                                  help='The CP/M user number (default: %(default)s)')
     arguments = argument_parser.parse_args()
-    formats: Set[FormatSpecification] = get_formats(arguments.source_file,
+    source_file = truncate_filename(arguments.source_file)
+    formats: Set[FormatSpecification] = get_formats(source_file,
                                                     arguments.transmission_format,
                                                     arguments.file_format)
     start_time = time()
@@ -254,13 +284,13 @@ def main():
                                baudrate=arguments.baud,
                                rtscts=arguments.flow_control,
                                timeout=1) as destination:
-                upload_file(filename=arguments.source_file, destination=destination, formats=formats,
+                upload_file(filename=source_file, destination=destination, formats=formats,
                             ms_delay=arguments.delay, user_number=arguments.user)
         except serial.SerialException as e:
             print(f'Failed to write to {arguments.port}: {e}')
             exit(1)
     else:
-        upload_file(filename=arguments.source_file, destination=None, formats=formats,
+        upload_file(filename=source_file, destination=None, formats=formats,
                     ms_delay=arguments.delay, user_number=arguments.user)
     stop_time = time()
     sys.stdout.flush()
@@ -270,7 +300,7 @@ def main():
     else:
         print(f'\n\n{arguments.transmission_format.capitalize()} transmission of', end=' ',
               file=sys.stderr)
-    print(f'{arguments.source_file}', end=' ',
+    print(f'{source_file}', end=' ',
           file=sys.stderr)
     if arguments.port is not None:
         print(f'to {arguments.port}', end=' ',
