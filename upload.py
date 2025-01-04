@@ -116,10 +116,10 @@ def upload_string(string: str, destination: Optional[serial.Serial], ms_delay: i
         sleep(ms_delay / 1000.0)
 
 
-def upload_file(filename: str, destination: Optional[serial.Serial],
+def upload_file(original_file: str, target_file: str, destination: Optional[serial.Serial],
                 formats: Iterable[FormatSpecification], ms_delay: int, user_number: int) -> None:
     if FormatSpecification.PLAINTEXT in formats:
-        with open(filename, 'rt') as source:
+        with open(original_file, 'rt') as source:
             for line in source.readlines():
                 statistics[Statistics.FILE_BYTES] += len(line)  # we are assuming 1 byte per character
                 # convert CP/M & MS-DOS & Windows to Unix, just in case it already has CP/M line terminations
@@ -134,8 +134,8 @@ def upload_file(filename: str, destination: Optional[serial.Serial],
                 statistics[Statistics.FINAL_LINE_TERMINATION_COUNT] += line.count('\r\n')
                 upload_string(line, destination, ms_delay)
     elif FormatSpecification.PACKAGE in formats:
-        with open(filename, 'rb') as source:
-            upload_string(f'A:DOWNLOAD {filename}\r\nU{user_number}\r\n:', destination, ms_delay)
+        with open(original_file, 'rb') as source:
+            upload_string(f'A:DOWNLOAD {target_file}\r\nU{user_number}\r\n:', destination, ms_delay)
             byte_count: int = 0
             byte_sum: int = 0
             block_bytes: bytes = source.read(128)
@@ -254,6 +254,8 @@ def main():
                                  help='The serial port for the serial connection (if omitted, rc2014upload will only print to the console, no transmission will be made)')
     argument_parser.add_argument('--flow-control', action=argparse.BooleanOptionalAction, default=True,
                                  help='Enable/disable flow control (default: enabled)')
+    argument_parser.add_argument('--exclusive-port', action=argparse.BooleanOptionalAction, default=True,
+                                 help='Enable/disable exclusive port access (default: enabled) -- n.b., neither shared nor exclusive access are guaranteed')
     argument_parser.add_argument('-b', '--baud', type=int, default=115200,
                                  choices=[50, 75, 110, 134, 150, 200, 300, 600, 1200, 1800, 2400, 4800, 9600, 14400,
                                           19200, 28800, 38400, 57600, 115200, 230400, 460800, 500000, 576000, 921600,
@@ -273,25 +275,25 @@ def main():
                                  help='The CP/M user number (default: %(default)s)')
     arguments = argument_parser.parse_args()
     source_file = truncate_filename(arguments.source_file)
-    formats: Set[FormatSpecification] = get_formats(source_file,
+    formats: Set[FormatSpecification] = get_formats(arguments.source_file,
                                                     arguments.transmission_format,
                                                     arguments.file_format)
     start_time = time()
     if arguments.port is not None:
         try:
-            # TODO: attempt to share the port (exclusive==False -- POSIX only) (doesn't work with `screen` but we can make it an option anyway)
             with serial.Serial(arguments.port,
                                baudrate=arguments.baud,
                                rtscts=arguments.flow_control,
+                               exclusive=arguments.exclusive_port,
                                timeout=1) as destination:
-                upload_file(filename=source_file, destination=destination, formats=formats,
-                            ms_delay=arguments.delay, user_number=arguments.user)
+                upload_file(original_file=arguments.source_file, target_file=source_file, destination=destination,
+                            formats=formats, ms_delay=arguments.delay, user_number=arguments.user)
         except serial.SerialException as e:
             print(f'Failed to write to {arguments.port}: {e}')
             exit(1)
     else:
-        upload_file(filename=source_file, destination=None, formats=formats,
-                    ms_delay=arguments.delay, user_number=arguments.user)
+        upload_file(original_file=arguments.source_file, target_file=source_file, destination=None,
+                    formats=formats, ms_delay=arguments.delay, user_number=arguments.user)
     stop_time = time()
     sys.stdout.flush()
     if arguments.port is None:

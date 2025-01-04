@@ -29,6 +29,7 @@ python upload.py [options] source_file
 | `-h`                                           | Show the help message.                                                                                                                                                                                                                                                                                                                                          |
 | `-p PORT`<br>`--port PORT`                     | The serial port used for the serial connection.<br>(See below for special cases.)                                                                                                                                                                                                                                                                               |
 | `--flow-control`<br>`--no-flow-control`        | Enables/disables hardware flow control.<br>(default: enabled)                                                                                                                                                                                                                                                                                                   |
+| `--exclusive-port`<br>`--no-exclusive-port`    | Enables/disables exclusive port access. (Neither shared nor exclusive access are guaranteed.)<br>(default: enabled)                                                                                                                                                                                                                                             
 | `-b BAUDRATE`<br>`--baud BAUDRATE`             | The baud rate for the serial connection.<br>(default: 115200)                                                                                                                                                                                                                                                                                                   |
 | `-d DELAY`<br>`--delay DELAY`                  | The delay (in milliseconds) between characters. This delay shouldn't be necessary if flow control is enabled.<br>(default: 0)                                                                                                                                                                                                                                   |
 | `-tf FORMAT`<br>`--transmission-format FORMAT` | The transmission format.<ul><li>*package* encodes the file for `DOWNLOAD.COM`.<li>*plaintext* transmits the file without any special encoding and forces the file format to be *text*.</ul>(default: *package*)                                                                                                                                                 |
@@ -52,22 +53,41 @@ website does not convert line terminators.)
 ### Inferring the File Format
 
 - If you specify the file format using `-ff` or `--file-format` then `update.py` will use that format, unless...
-- If you specify a *plaintext* transmission (using `-tf plaintext` or `--transmission-format plaintext`) then the file format will be set to *text* **even if you set the file format to *binary* using `-ff binary` or `--file-format binary`**.
+- If you specify a *plaintext* transmission (using `-tf plaintext` or `--transmission-format plaintext`) then the file
+  format will be set to *text* **even if you set the file format to *binary* using `-ff binary`
+  or `--file-format binary`**.
 
-If neither of those cases are at play, then `update.py` will infer the file type from the file extension if possible or from the file contents otherwise.
+If neither of those cases are at play, then `update.py` will infer the file type from the file extension if possible or
+from the file contents otherwise.
 
 - `.BIN` and `.COM` files are assumed to be *binary*.
 - Source code is assumed to be *text*.
-  - Assembly (`.ASM`)
-  - Ada (`.ADB`, `.ADS`)
-  - BASIC (`.BAS`)
-  - C (`.C`, `.H`)
-  - FORTRAN (`.F`, `.F77`, `.FOR`)
-  - Forth (`.F`, `.FTH`, `.FS`, `.4TH`)
-  - Pascal (`.PAS`)
+    - Assembly (`.ASM`)
+    - Ada (`.ADB`, `.ADS`)
+    - BASIC (`.BAS`)
+    - C (`.C`, `.H`)
+    - FORTRAN (`.F`, `.F77`, `.FOR`)
+    - Forth (`.F`, `.FTH`, `.FS`, `.4TH`)
+    - Pascal (`.PAS`)
 - `.BAK` and `.TXT` files are assumed to be *text*.
 - If the file's first kilobyte can be interpreted as valid UTF-8, then the file is assumed to be *text*.
 - Otherwise, the file is assumed to be *binary*.
+
+## Notes with Regard to BASIC
+
+If you load BASIC on the remote computer and then transmit a `.BAS` file as *plaintext* then the program will be entered
+into
+BASIC just as though you were hand-typing it (though faster and without typographical errors).
+That will work regardless of whether you're using ROM Microsoft BASIC, CP/M Microsoft BASIC, or CP/M BBC BASIC.
+If you subsequently save the file from one of the CP/M BASICs, BASIC will save the file in a slightly-compressed
+format (replacing keywords with opcodes, replacing line number digits with hexadecimal values, a few other
+optimizations).
+BBC BASIC and Microsoft BASIC save their files in mutually-incompatible formats.
+
+If you leave the remote computer on a CP/M command line and then transmit a `.BAS` file as a *package*, then Microsoft
+BASIC will load the file and run it (unless there's a `CLS` statement; MBASIC treats that as a syntax error, but that's
+easily dealt with).
+BBC BASIC, on the other hand, will *not* load the file.
 
 ## Examples
 
