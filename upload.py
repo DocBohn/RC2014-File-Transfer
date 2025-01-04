@@ -48,12 +48,13 @@ import sys
 from enum import StrEnum
 from inspect import currentframe, getframeinfo
 from time import sleep, time
-from typing import Dict, Iterable, List, Optional, Set, Union
+from typing import Dict, Iterable, List, NamedTuple, Optional, Set, Union
 
 import serial  # from the pyserial package (https://pyserial.readthedocs.io/)
 
 
 class FormatSpecification(StrEnum):
+    # TODO: treat these separately
     PACKAGE = 'package'
     PLAINTEXT = 'plaintext'
     BINARY = 'binary'
@@ -63,7 +64,7 @@ class FormatSpecification(StrEnum):
 class Statistics(StrEnum):
     FILE_BYTES = 'file bytes'
     TRANSMITTED_BYTES = 'transmitted bytes'
-    INITIAL_CRLF_COUNT = 'CRLF count'
+    INITIAL_CRLF_COUNT = 'CRLF count'   # TODO: work with the enum mentioned in the next TODO
     INITIAL_CR_COUNT = 'CR count'
     INITIAL_LF_COUNT = 'LF count'
     FINAL_LINE_TERMINATION_COUNT = 'line terminations'
@@ -80,8 +81,22 @@ statistics: Dict[str, Union[bool, int]] = {
     Statistics.MISMATCHED_FORMATS: False,
 }
 
+class Arguments(NamedTuple):
+    original_files: List[str]
+    serial_port: Optional[str]
+    flow_control_enabled: bool
+    exclusive_port_access_mode: bool
+    baud_rate: int
+    ms_delay: int
+    transmission_format: FormatSpecification
+    file_format: FormatSpecification
+    EOLs_to_convert: List[str]  # TODO: create enum
+    target_newline: Optional[str]
+    user_number: int
+
 
 def upload_string(string: str, destination: Optional[serial.Serial], ms_delay: int, is_text_encoded_hex: bool = False):
+    # TODO: split into `echo_string` and `upload_string`
     statistics[Statistics.TRANSMITTED_BYTES] += len(string)  # we are assuming 1 byte per character
     first_nibble: Optional[str] = None
     second_nibble: Optional[str] = None
@@ -148,6 +163,7 @@ def upload_file(original_file: str, target_file: str, destination: Optional[seri
                     # make sure lines have CP/M line terminations
                     # TODO: should this be parameterized to convert to Apple ][ line terminations?
                     # TODO: should this be parameterized to not convert at all?
+                    #       Answer: see below
                     # convert CP/M & MS-DOS & Windows to Unix, just in case it already has CP/M line terminations
                     termination_count: int = block_string.count('0D0A')
                     block_string = block_string.replace('0D0A', '0A')
@@ -208,7 +224,7 @@ def get_formats(filename: str, transmission_format: str, file_format: Optional[s
         with open(filename, 'rb') as file:
             first_kilobyte: bytes = file.read(1024)
             try:
-                first_kilobyte.decode('utf-8')  # TODO: should we use 'ascii' instead?
+                first_kilobyte.decode('ascii')  # TODO: should we use 'utf-8' instead?
                 # if the first KB can be decoded as text, then it's probably text
                 formats = {FormatSpecification.PACKAGE, FormatSpecification.TEXT}
             except UnicodeDecodeError:
@@ -244,12 +260,16 @@ def truncate_filename(filename: str) -> str:
     return new_filename
 
 
-def main():
+def get_arguments() -> Arguments:
+    # TODO: multiple source files
+    # TODO: what if we don't want to convert line terminators? For package, no problem: send as binary. What about plaintext?
+    #       Answer: --from-EOL abc def --to-EOL ghi (see https://en.wikipedia.org/wiki/Newline#Representation)
+    # TODO: receive files (trigger https://github.com/RC2014Z80/RC2014/tree/master/CPM/UPLOAD.COM)
     argument_parser = argparse.ArgumentParser(
         prog='upload',
         description='Upload file to RC2014 or similar retrocomputer'
     )
-    argument_parser.add_argument('source_file')
+    argument_parser.add_argument('source_file', type=str, nargs='+')
     argument_parser.add_argument('-p', '--port', type=str, default=None,
                                  help='The serial port for the serial connection (if omitted, rc2014upload will only print to the console, no transmission will be made)')
     argument_parser.add_argument('--flow-control', action=argparse.BooleanOptionalAction, default=True,
@@ -274,38 +294,55 @@ def main():
                                  choices=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
                                  help='The CP/M user number (default: %(default)s)')
     arguments = argument_parser.parse_args()
-    source_file = truncate_filename(arguments.source_file)
-    formats: Set[FormatSpecification] = get_formats(arguments.source_file,
+    return Arguments(
+        original_files=arguments.source_file,
+        serial_port=arguments.port,
+        flow_control_enabled=arguments.flow_control,
+        exclusive_port_access_mode=arguments.exclusive_port,
+        baud_rate=arguments.baud,
+        ms_delay=arguments.delay,
+        transmission_format=arguments.transmission_format,
+        file_format=arguments.file_format,
+        EOLs_to_convert=[],
+        target_newline=None,
+        user_number=arguments.user
+    )
+
+
+def main():
+    arguments = get_arguments()
+    target_files = [truncate_filename(name) for name in arguments.original_files]
+    formats: Set[FormatSpecification] = get_formats(arguments.original_files[0],
                                                     arguments.transmission_format,
                                                     arguments.file_format)
     start_time = time()
-    if arguments.port is not None:
+    if arguments.serial_port is not None:
         try:
-            with serial.Serial(arguments.port,
-                               baudrate=arguments.baud,
-                               rtscts=arguments.flow_control,
-                               exclusive=arguments.exclusive_port,
+            with serial.Serial(arguments.serial_port,
+                               baudrate=arguments.baud_rate,
+                               rtscts=arguments.flow_control_enabled,
+                               exclusive=arguments.exclusive_port_access_mode,
                                timeout=1) as destination:
-                upload_file(original_file=arguments.source_file, target_file=source_file, destination=destination,
-                            formats=formats, ms_delay=arguments.delay, user_number=arguments.user)
+                upload_file(original_file=arguments.original_files[0], target_file=target_files[0], destination=destination,
+                            formats=formats, ms_delay=arguments.ms_delay, user_number=arguments.user_number)
         except serial.SerialException as e:
-            print(f'Failed to write to {arguments.port}: {e}')
+            print(f'Failed to write to {arguments.serial_port}: {e}')
             exit(1)
     else:
-        upload_file(original_file=arguments.source_file, target_file=source_file, destination=None,
-                    formats=formats, ms_delay=arguments.delay, user_number=arguments.user)
+        upload_file(original_file=arguments.original_files[0], target_file=target_files[0], destination=None,
+                    formats=formats, ms_delay=arguments.ms_delay, user_number=arguments.user_number)
     stop_time = time()
     sys.stdout.flush()
-    if arguments.port is None:
+    if arguments.serial_port is None:
         print(f'\n\nSimulated {arguments.transmission_format} transmission of', end=' ',
               file=sys.stderr)
     else:
         print(f'\n\n{arguments.transmission_format.capitalize()} transmission of', end=' ',
               file=sys.stderr)
-    print(f'{source_file}', end=' ',
+    print(f'{target_files}', end=' ',
           file=sys.stderr)
-    if arguments.port is not None:
-        print(f'to {arguments.port}', end=' ',
+    if arguments.serial_port is not None:
+        print(f'to {arguments.serial_port}', end=' ',
               file=sys.stderr)
     print(f'completed in {round(stop_time - start_time, 3)} seconds.',
           file=sys.stderr)
