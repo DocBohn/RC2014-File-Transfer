@@ -44,11 +44,12 @@ SOFTWARE.
 import argparse
 import functools
 import os
+import random
 import sys
 from enum import StrEnum
 from inspect import currentframe, getframeinfo
 from time import sleep, time
-from typing import Dict, List, NamedTuple, Optional, Union
+from typing import Dict, FrozenSet, Iterable, List, NamedTuple, Optional, Union
 
 import serial  # from the pyserial package (https://pyserial.readthedocs.io/)
 
@@ -104,7 +105,7 @@ class Arguments(NamedTuple):
     serial_port: Optional[Port]
     ms_delay: int
     transmission_format: TransmissionFormat
-    source_newlines: List[str]  # TODO: create enum
+    source_newlines: FrozenSet[str]  # TODO: create enum
     target_newline: str
     user_number: int
     receive: bool
@@ -112,25 +113,26 @@ class Arguments(NamedTuple):
 
 def upload_string(string: str, destination: Optional[serial.Serial], ms_delay: int, is_text_encoded_hex: bool = False):
     # TODO: split into `echo_string` and `upload_string`
+    global statistics
     statistics[Statistics.TRANSMITTED_BYTES] += len(string)  # we are assuming 1 byte per character
     first_nibble: Optional[str] = None
     second_nibble: Optional[str] = None
     for character in string:
         if character == '\\':
-            print('\\\\', end='')
+            print('\\\\', end='', flush=True)
         elif character == '\t':
-            print('\\t', end='\t')
+            print('\\t', end='\t', flush=True)
         elif character == '\r':
-            print('\\r', end='')
+            print('\\r', end='', flush=True)
         elif character == '\n':
-            print('\\n', end='\n')
+            print('\\n', end='\n', flush=True)
         elif is_text_encoded_hex:
             if first_nibble is None:
                 first_nibble = character
-                print(character, end='')
+                print(character, end='', flush=True)
             elif second_nibble is None:
                 second_nibble = character
-                print(character, end='\n' if first_nibble + second_nibble == '0A' else ' ')
+                print(character, end='\n' if first_nibble + second_nibble == '0A' else ' ', flush=True)
                 first_nibble = None
                 second_nibble = None
             else:
@@ -138,32 +140,65 @@ def upload_string(string: str, destination: Optional[serial.Serial], ms_delay: i
                                      f'(string={string}, character={character}, '
                                      f'first_nibble={first_nibble}, second_nibble={second_nibble})')
         else:
-            print(character, end='')
-        sys.stdout.flush()
+            print(character, end='', flush=True)
         if destination is not None:
             destination.write(character.encode())
             destination.flush()
         sleep(ms_delay / 1000.0)
 
 
+last_successful_temporary_newline = '\u0081'  # used only if we can't use '\r' or '\n'
+def convert_newlines(string: str, transmission_format: TransmissionFormat,
+                     source_newlines: Iterable[str], target_newline: str) -> str:
+    assert transmission_format in {TransmissionFormat.PACKAGE, TransmissionFormat.PLAINTEXT}
+    global last_successful_temporary_newline, statistics
+    temporary_newline: str = last_successful_temporary_newline
+    if 'LF' in source_newlines or '\n' not in string:
+        temporary_newline = '\n'
+    elif 'CR' in source_newlines or '\r' not in string:
+        temporary_newline = '\r'
+    else:
+        while temporary_newline in string:
+            temporary_newline = chr(random.randint(0x80, 0x100000))
+        last_successful_temporary_newline = temporary_newline
+    cr: str = '\r' if transmission_format == TransmissionFormat.PLAINTEXT else '0D'
+    lf: str = '\n' if transmission_format == TransmissionFormat.PLAINTEXT else '0A'
+    crlf: str = '\r\n' if transmission_format == TransmissionFormat.PLAINTEXT else '0D0A'
+    lfcr: str = '\n\r' if transmission_format == TransmissionFormat.PLAINTEXT else '0A0D'
+    statistics[Statistics.INITIAL_CRLF_COUNT] += string.count(crlf)
+    statistics[Statistics.INITIAL_LFCR_COUNT] += string.count(lfcr)
+    statistics[Statistics.INITIAL_CR_COUNT] += (string.count(cr)
+                                                - statistics[Statistics.INITIAL_CRLF_COUNT]
+                                                - statistics[Statistics.INITIAL_LFCR_COUNT])
+    statistics[Statistics.INITIAL_LF_COUNT] += (string.count(lf)
+                                                - statistics[Statistics.INITIAL_CRLF_COUNT]
+                                                - statistics[Statistics.INITIAL_LFCR_COUNT])
+    # convert CP/M, MS-DOS, Windows, etc to Unix
+    if 'CRLF' in source_newlines:
+        string = string.replace(crlf, temporary_newline)
+    # convert BBC Micro to Unix
+    if 'LFCR' in source_newlines:
+        string = string.replace(lfcr, temporary_newline)
+    # convert Apple, Commodore, etc to Unix
+    if 'CR' in source_newlines:
+        string = string.replace(cr, temporary_newline)
+    # convert Unix to target
+    if 'LF' in source_newlines:
+        string = string.replace(lf, temporary_newline)
+    string = string.replace(temporary_newline, target_newline)
+    statistics[Statistics.FINAL_NEWLINE_COUNT] += string.count(target_newline)
+    return string
+
+
 def upload_file(original_file: str, target_file: str, destination: Optional[serial.Serial],
                 file_format: FileFormat, transmission_format: TransmissionFormat, ms_delay: int,
                 user_number: int) -> None:
-    # TODO: convert BBCMicro(\n\r / 0A0D) to Unix for conversion to CP/M
+    global statistics
     if transmission_format == TransmissionFormat.PLAINTEXT:
         with open(original_file, 'rt') as source:
             for line in source.readlines():
                 statistics[Statistics.FILE_BYTES] += len(line)  # we are assuming 1 byte per character
-                # convert CP/M & MS-DOS & Windows to Unix, just in case it already has CP/M line terminations
-                statistics[Statistics.INITIAL_CRLF_COUNT] += line.count('\r\n')
-                line = line.replace('\r\n', '\n')
-                # convert Apple ][ & classic Mac to Unix
-                statistics[Statistics.INITIAL_CR_COUNT] += line.count('\r')
-                line = line.replace('\r', '\n')
-                # convert Unix to CP/M
-                statistics[Statistics.INITIAL_LF_COUNT] += line.count('\n')  # over-count, corrected below
-                line = line.replace('\n', '\r\n')
-                statistics[Statistics.FINAL_NEWLINE_COUNT] += line.count('\r\n')
+                line = convert_newlines(line, transmission_format, ['CRLF', 'LFCR', 'CR', 'LF'], 'CRLF')
                 upload_string(line, destination, ms_delay)
     elif transmission_format == TransmissionFormat.PACKAGE:
         with open(original_file, 'rb') as source:
@@ -173,44 +208,21 @@ def upload_file(original_file: str, target_file: str, destination: Optional[seri
             block_bytes: bytes = source.read(128)
             while block_bytes:
                 statistics[Statistics.FILE_BYTES] += len(block_bytes)
-                byte_count += len(block_bytes)
-                byte_sum += functools.reduce(lambda a, b: a + b, block_bytes)
                 block_string: str = ''.join(f'{byte:02x}'.upper() for byte in block_bytes)
-                if file_format == FileFormat.TEXT:
-                    # make sure lines have CP/M line terminations
-                    # TODO: should this be parameterized to convert to Apple ][ line terminations?
-                    # TODO: should this be parameterized to not convert at all?
-                    #       Answer: see below
-                    # convert CP/M & MS-DOS & Windows to Unix, just in case it already has CP/M line terminations
-                    termination_count: int = block_string.count('0D0A')
-                    block_string = block_string.replace('0D0A', '0A')
-                    statistics[Statistics.INITIAL_CRLF_COUNT] += termination_count
-                    byte_count -= termination_count
-                    byte_sum -= termination_count * 0x0D
-                    # convert Apple ][ & classic Mac to Unix
-                    termination_count: int = block_string.count('0D')
-                    block_string = block_string.replace('0D', '0A')
-                    statistics[Statistics.INITIAL_CR_COUNT] += termination_count
-                    byte_sum = byte_sum - termination_count * 0x0D + termination_count * 0x0A
-                    # convert Unix to CP/M
-                    termination_count: int = block_string.count('0A')
-                    block_string = block_string.replace('0A', '0D0A')
-                    statistics[Statistics.INITIAL_LF_COUNT] += termination_count  # over-count, corrected below
-                    byte_count += termination_count
-                    byte_sum += termination_count * 0x0D
-                statistics[Statistics.FINAL_NEWLINE_COUNT] += block_string.count('0D0A')
-                upload_string(block_string, destination, ms_delay)
+                block_string = convert_newlines(block_string, transmission_format, ['CRLF', 'LFCR', 'CR', 'LF'], 'CRLF')
+                byte_count += len(block_string) // 2
+                byte_sum += functools.reduce(lambda a, b: a + b,
+                                             [int(block_string[i:i + 2], 16) for i in range(0, len(block_string), 2)])
+                upload_string(block_string, destination, ms_delay, is_text_encoded_hex=True)
                 block_bytes = source.read(128)
             padding_needed: int = 128 - (byte_count % 128)
             if padding_needed > 0:
                 byte_count += padding_needed
-                upload_string(''.join('00' for _ in range(padding_needed)), destination, ms_delay)
+                upload_string(''.join('00' for _ in range(padding_needed)), destination, ms_delay,
+                              is_text_encoded_hex=True)
             upload_string(f'>{(byte_count & 0xFF):02x}{(byte_sum & 0xFF):02x}'.upper(), destination, ms_delay)
     else:
         raise ValueError(f'No supported transmission format found in {transmission_format}.')
-    # correct over-count
-    statistics[Statistics.INITIAL_LF_COUNT] -= (
-            statistics[Statistics.INITIAL_CRLF_COUNT] + statistics[Statistics.INITIAL_CR_COUNT])
 
 
 def truncate_filename(filename: str) -> str:
@@ -264,7 +276,7 @@ def get_file_format(filename: str, file_format: Optional[str], transmission_form
         try:
             with open(filename, 'rb') as file:
                 first_kilobyte: bytes = file.read(1024)
-                # TODO: what will this do with "extended ASCII"? ('utf-8' probably won't help)
+                # TODO: what will this do with "extended ASCII" (such as 'latin1')? ('utf-8' probably won't help)
                 first_kilobyte.decode('ascii')
                 # if the first KB can be decoded as text, then it's probably text
                 f_format = FileFormat.TEXT
@@ -279,8 +291,6 @@ def get_file_format(filename: str, file_format: Optional[str], transmission_form
 
 def get_arguments() -> Arguments:
     # TODO: multiple source files
-    # TODO: what if we don't want to convert line terminators? For package, no problem: send as binary. What about plaintext?
-    #       Answer: --from-EOL abc def --to-EOL ghi (see https://en.wikipedia.org/wiki/Newline#Representation)
     # TODO: receive files (trigger https://github.com/RC2014Z80/RC2014/tree/master/CPM/UPLOAD.COM)
     argument_parser = argparse.ArgumentParser(
         prog='upload',
@@ -312,18 +322,18 @@ def get_arguments() -> Arguments:
                                  choices=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
                                  help='The CP/M user number (default: %(default)s).')
     argument_parser.add_argument('-rx', '--receive', action='store_true',
-                                 help='(placeholder--currently unused)\nIndicates that the file transfer will be to receive a file or files from the remote computer (default: the file transfer will be to transmit a file or files to the remote computer).')
+                                 help='(placeholder--currently unused)\nIndicates that the file transfer will be to receive a file or files from the remote computer (default: the file transfer will be to send a file or files to the remote computer).')
     argument_parser.add_argument('--source-newlines', type=str, nargs='*',
                                  choices=['CR', 'LF', 'CRLF', 'LFCR', 'system'],
                                  default=['CR', 'LF', 'CRLF', 'LFCR'],
                                  help='(placeholder--currently uses only CR LF CRLF) One or more types of newlines to be converted to the destination computer\'s newline (default: %(default)s). '
                                       'An empty set of source-newlines indicates that no newline conversion should take place. '
-                                      'When transmitting a file, \'system\' is the host computer\'s newline; when receiving a file, \'system\' is equivalent to CRLF (under the assumption that the remote computer runs CP/M). '
+                                      'When sending a file, \'system\' is the host computer\'s newline; when receiving a file, \'system\' is equivalent to CRLF (under the assumption that the remote computer runs CP/M). '
                                       'This option is applicable only to text files and is ignored for binary files.')
     argument_parser.add_argument('--target-newline', type=str, choices=['CR', 'LF', 'CRLF', 'LFCR', 'system'],
                                  default='system',
                                  help='(placeholder--currently uses only CRLF) The newline that the source-newlines will be converted to (default: %(default)s). '
-                                      'When receiving a file, \'system\' is the host computer\'s newline; when transmitting a file, \'system\' is equivalent to CRLF (under the assumption that the remote computer runs CP/M). '
+                                      'When receiving a file, \'system\' is the host computer\'s newline; when sending a file, \'system\' is equivalent to CRLF (under the assumption that the remote computer runs CP/M). '
                                       'This option is applicable only to text files and is ignored for binary files.'
                                       'This option is ignored if the source-newlines is an empty set.')
     arguments = argument_parser.parse_args()
@@ -343,7 +353,7 @@ def get_arguments() -> Arguments:
                          baud_rate=arguments.baud) if arguments.port is not None else None,
         ms_delay=arguments.delay,
         transmission_format=transmission_format,
-        source_newlines=arguments.source_newlines,
+        source_newlines=frozenset(arguments.source_newlines),
         target_newline=arguments.target_newline,
         user_number=arguments.user,
         receive=arguments.receive
@@ -351,6 +361,7 @@ def get_arguments() -> Arguments:
 
 
 def main():
+    global statistics
     arguments = get_arguments()
     start_time = time()
     if arguments.serial_port is not None:
@@ -395,14 +406,16 @@ def main():
     print(f'\tTransmission size: {str(statistics[Statistics.TRANSMITTED_BYTES]).rjust(9)}',
           file=sys.stderr)
     if arguments.files[0].format == FileFormat.TEXT:
-        print(f'\tInitial CP/M  line terminations: {str(statistics[Statistics.INITIAL_CRLF_COUNT]).rjust(6)}',
+        print(f'\tInitial CRLF newlines: {str(statistics[Statistics.INITIAL_CRLF_COUNT]).rjust(6)}',
               file=sys.stderr)
-        print(f'\tInitial Apple line terminations: {str(statistics[Statistics.INITIAL_CR_COUNT]).rjust(6)}',
+        print(f'\tInitial LFCR newlines: {str(statistics[Statistics.INITIAL_LFCR_COUNT]).rjust(6)}',
               file=sys.stderr)
-        print(f'\tInitial Unix  line terminations: {str(statistics[Statistics.INITIAL_LF_COUNT]).rjust(6)}',
+        print(f'\tInitial CR   newlines: {str(statistics[Statistics.INITIAL_CR_COUNT]).rjust(6)}',
               file=sys.stderr)
-        print(f'\tFinal   CP/M  line terminations: {str(statistics[Statistics.FINAL_NEWLINE_COUNT]).rjust(6)}',
+        print(f'\tInitial LF   newlines: {str(statistics[Statistics.INITIAL_LF_COUNT]).rjust(6)}',
               file=sys.stderr)
+        print(f'\tFinal   {"crlf".ljust(4)} newlines: {str(statistics[Statistics.FINAL_NEWLINE_COUNT]).rjust(6)}',
+              file=sys.stderr)  # TODO: parameterize
 
 
 if __name__ == '__main__':
