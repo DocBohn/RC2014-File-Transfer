@@ -43,6 +43,7 @@ SOFTWARE.
 
 import argparse
 import functools
+import io
 import os
 import random
 import sys
@@ -50,7 +51,8 @@ from enum import Enum, StrEnum
 from time import sleep, time
 from typing import Dict, FrozenSet, Iterable, List, NamedTuple, Optional, Union
 
-import serial  # from the pyserial package (https://pyserial.readthedocs.io/)
+import pyperclip    # from the pyperclip package (https://pyperclip.readthedocs.io/)
+import serial       # from the pyserial package  (https://pyserial.readthedocs.io/)
 
 
 class TransmissionFormat(StrEnum):
@@ -123,6 +125,9 @@ statistics: Dict[str, Union[bool, int]] = {
     Statistics.INITIAL_LF_COUNT: 0,
     Statistics.FINAL_NEWLINE_COUNT: 0,
 }
+
+# TODO: what will this do with "extended ASCII" (such as 'latin1', or pseudographical characters)? ('utf-8' probably won't help)
+CHARACTER_ENCODING: str = 'ascii'
 
 
 def convert_newlines(string: str, transmission_format: TransmissionFormat,
@@ -204,8 +209,9 @@ def echo_character(character: str,
         print(character, end='', flush=True)
 
 
-def send_string(string: str, destination: Optional[serial.Serial], ms_delay: int, echo_transmission: bool,
-                file_format: Optional[FileFormat] = None, transmission_format: Optional[TransmissionFormat] = None) -> None:
+def send_string(string: str, destination: Optional[Union[io.BytesIO, serial.Serial]], ms_delay: int,
+                echo_transmission: bool, file_format: Optional[FileFormat] = None,
+                transmission_format: Optional[TransmissionFormat] = None) -> None:
     global statistics
     statistics[Statistics.TRANSMITTED_BYTES] += len(string)  # we are assuming 1 byte per character
     for character in string:
@@ -257,8 +263,8 @@ def send_file(original_file: str, target_file: str, destination: Optional[serial
         print(f'File {original_file} not found.')
 
 
-def send_files(arguments: Arguments, destination: Optional[serial.Serial]) -> None:
-    global statistics
+def send_files(arguments: Arguments, destination: Optional[Union[io.BytesIO, serial.Serial]]) -> None:
+    global statistics, CHARACTER_ENCODING
     interfile_delay: float = 1.0
     file_count: int = len(arguments.files)
     for file_number, file in enumerate(arguments.files):
@@ -288,6 +294,11 @@ def send_files(arguments: Arguments, destination: Optional[serial.Serial]) -> No
                   user_number=arguments.user_number)
         stop_time = time()
         sys.stdout.flush()
+        if isinstance(destination, io.BytesIO):
+            destination.seek(0)
+            pyperclip.copy(destination.read().decode(CHARACTER_ENCODING))
+            if not pyperclip.is_available():
+                print('\nClipboard is unavailable.')
         if arguments.serial_port is None:
             print(f'\nSimulated {arguments.transmission_format} transmission of', end=' ')
         else:
@@ -331,7 +342,7 @@ def truncate_filename(filename: str) -> str:
             if len(user_filename_tokens) == 0 or user_filename_tokens[0] == '':
                 new_filename = proposed_filename
             elif len(user_filename_tokens) == 1 and len(user_filename_tokens[0]) <= 8:
-                new_filename = user_filename_tokens[0].upper() + '.' # TODO: I think we can eliminate the '.' but let's double-check
+                new_filename = user_filename_tokens[0].upper()
             elif (len(user_filename_tokens) == 2
                   and len(user_filename_tokens[0]) <= 8
                   and len(user_filename_tokens[1]) <= 3):
@@ -342,6 +353,7 @@ def truncate_filename(filename: str) -> str:
 
 
 def get_file_format(filename: str, file_format: Optional[str], transmission_format: TransmissionFormat) -> FileFormat:
+    global CHARACTER_ENCODING
     binary_file_extensions = {'.BIN', '.COM', '.O'}
     text_file_extensions = {'.ASM',
                             '.ADB', '.ADS',
@@ -364,8 +376,7 @@ def get_file_format(filename: str, file_format: Optional[str], transmission_form
         try:
             with open(filename, 'rb') as file:
                 first_kilobyte: bytes = file.read(1024)
-                # TODO: what will this do with "extended ASCII" (such as 'latin1')? ('utf-8' probably won't help)
-                first_kilobyte.decode('ascii')
+                first_kilobyte.decode(CHARACTER_ENCODING)
                 # if the first KB can be decoded as text, then it's probably text
                 f_format = FileFormat.TEXT
         except UnicodeDecodeError:
@@ -379,14 +390,14 @@ def get_file_format(filename: str, file_format: Optional[str], transmission_form
 
 def get_arguments() -> Arguments:
     # TODO: receive files (trigger https://github.com/RC2014Z80/RC2014/tree/master/CPM/UPLOAD.COM)
-    # TODO: what happens if the original file has no extension?
     argument_parser = argparse.ArgumentParser(
         prog='upload',
         description='Upload file to RC2014 or similar retrocomputer'
     )
     argument_parser.add_argument('source_file', type=str, nargs='+')
     argument_parser.add_argument('-p', '--port', type=str, default=None,
-                                 help='The serial port for the serial connection (if omitted, rc2014upload will only print to the console, no transmission will be made).')
+                                 help='The serial port for the serial connection (if omitted, upload.py will only print to the console, no transmission will be made). '
+                                      'If \'clipboard\' is specified, then the encoded file will be copied to the clipboard (no the transmission will be made).')
     argument_parser.add_argument('--flow-control', action=argparse.BooleanOptionalAction, default=True,
                                  help='Enable/disable flow control (default: enabled)')
     argument_parser.add_argument('--exclusive-port', action=argparse.BooleanOptionalAction, default=True,
@@ -456,7 +467,12 @@ def get_arguments() -> Arguments:
 
 def main():
     arguments = get_arguments()
-    if arguments.serial_port is not None:
+    if arguments.serial_port is None:
+        send_files(arguments, None)
+    elif arguments.serial_port.name.lower() == 'clipboard':
+        with io.BytesIO() as buffer:
+            send_files(arguments, buffer)
+    else:
         try:
             with serial.Serial(port=arguments.serial_port.name,
                                baudrate=arguments.serial_port.baud_rate,
@@ -467,8 +483,6 @@ def main():
         except serial.SerialException as e:
             print(f'Failed to write to {arguments.serial_port.name}: {e}')
             exit(1)
-    else:
-        send_files(arguments, None)
 
 
 if __name__ == '__main__':

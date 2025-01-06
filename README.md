@@ -14,7 +14,7 @@ the port (with the `-p` option) and the file to be uploaded.
 
 ## Dependence
 
-`upload.py` requires the `pyserial` library.
+`upload.py` requires the `pyserial` library and the `pyperclip` library.
 
 ## Usage
 
@@ -45,14 +45,11 @@ python upload.py [options] source_file [source_file ...]
 If no serial port is specified, then `upload.py` will simulate the transmission, printing only to the host computer's
 console.
 
-### Output Suitable for Copy/Paste
+### Copying to the Host Computer's Clipboard
 
-***TODO*** -- not yet a feature
-
-Obviously, if you want to copy/paste *plaintext* then you can simply copy the text of the file.
-On the other hand, if you want to copy/paste a *package* encoding then for now I recommend that you use
-the [File Packager on the RC2014 website](https://rc2014.co.uk/filepackage/). (*n.b.*, the File Packager on the RC2014
-website does not convert line terminators.)
+If *clipboard* is specified as the "serial port" (`-p clipboard`) then the encoded file will be copied to the host computer's clipboard,
+making it possible for you to paste the encoded file into another application.
+*n.b.*, Only the last file to be "transmitted" to the clipboard will be present on the clipboard.
 
 ### Inferring the File Format
 
@@ -128,10 +125,8 @@ Because no port was specified, no actual transmission was made.
 
 ### Sending a C program to `DOWNLOAD.COM`
 
-[//]: # (TODO replace with actual use for timing data)
-
 ```
-% python upload.py examples/hello.c 
+% python upload.py -p /dev/tty.usbmodem02901 examples/hello.c 
 Uploading file 1/1: examples/hello.c -> HELLO.C
 A:DOWNLOAD HELLO.C\r\n
 U0\r\n
@@ -142,7 +137,8 @@ U0\r\n
 09 72 65 74 75 72 6E 20 30 3B 0D 0A 
 7D 0D 0A 
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 >802F
-Simulated package transmission of HELLO.C (1/1) completed in 0.001 seconds.
+
+Package transmission of HELLO.C to /dev/tty.usbmodem02901 (1/1) completed in 0.079 seconds.
 	File format: text (specified as inferred)
 	File size:                 73
 	Bytes of padding:          49
@@ -152,6 +148,7 @@ Simulated package transmission of HELLO.C (1/1) completed in 0.001 seconds.
 	Initial CR   newlines:      0
 	Initial LF   newlines:      6
 	Final   CRLF newlines:      6
+
 ```
 
 Here we see that `HELLO.C` was transmitted as a package.
@@ -166,10 +163,8 @@ The transmission size is a bit larger than the original file, but we can see why
 
 ### Sending a binary file to `DOWNLOAD.COM`
 
-[//]: # (TODO replace with actual use for timing data)
-
 ```
-% .venv/bin/python upload.py examples/HELLO.COM
+% python upload.py -p /dev/tty.usbmodem02901 examples/HELLO.COM 
 Uploading file 1/1: examples/HELLO.COM -> HELLO.COM
 A:DOWNLOAD HELLO.COM\r\n
 U0\r\n
@@ -185,7 +180,8 @@ U0\r\n
 00 00 00 00 00 00 00 00   00 00 00 00 00 00 00 00 
 00 00 00 00 00 00 00 00   00 00 00 00 00 00 00 00 
 >801B
-Simulated package transmission of HELLO.COM (1/1)completed in 0.022 seconds.
+
+Package transmission of HELLO.COM to /dev/tty.usbmodem02901 (1/1) completed in 0.766 seconds.
 	File format: binary (specified as inferred)
 	File size:               1840
 	Bytes of padding:          80
@@ -194,13 +190,12 @@ Simulated package transmission of HELLO.COM (1/1)completed in 0.022 seconds.
 
 Here we see that `HELLO.COM` was transmitted as a package.
 As with `HELLO.C`, spaces and newlines have been added to the console echo for readability
-(though, for a binary file, we don't assume that 0x0A is (part of) a newline, and instead simply print 16 "byte" per line).
+(though, for a binary file, we don't assume that 0x0A is (part of) a newline, and instead simply print 16 "bytes" per line).
 
 ### Sending multiple files, renaming a file, and specifying a non-existent file
 
 ```
-% .venv/bin/python upload.py --no-echo examples/hello.c* examples/foo.bar examples/HELLO.COM
-% .venv/bin/python upload.py --no-echo examples/hello.c* examples/foo.bar.baz examples/HELLO.COM
+% python upload.py --no-echo examples/hello.c* examples/foo.bar.baz examples/HELLO.COM
 hello.c.asm needs to be renamed to 8.3 format [HELLO_C.ASM]: hello.asm
 foo.bar.xyzzy needs to be renamed to 8.3 format [FOO_BAR.XYZ]: 
 Uploading file 1/4: examples/hello.c.asm -> HELLO.ASM
@@ -251,3 +246,49 @@ Here we see that we used wildcards to specify `hello.c` and `hello.c.asm`, and w
 The program prompted us to rename `hello.c.asm`, suggesting `HELLO_C.ASM`; we chose a different name.
 The program prompted us to rename `foo.bar.xyzzy`, suggesting `FOO_BAR.XYZ`; we accepted the suggestion.
 The program then iterated over the files, transmitting each in turn -- except for the non-existent `foo.bar.xyzzy`.
+
+### Copying to the clipboard
+
+```
+% python upload.py -p clipboard examples/hello.bas 
+Uploading file 1/1: examples/hello.bas -> HELLO.BAS
+A:DOWNLOAD HELLO.BAS\r\n
+U0\r\n
+:31 30 20 70 72 69 6E 74 20 22 68 65 6C 6C 6F 22 3B 0D 0A 
+32 30 20 70 72 69 6E 74 20 22 20 77 6F 72 6C 64 22 0D 0A 
+0D 0A 
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 >8001
+
+Package transmission of HELLO.BAS to clipboard (1/1) completed in 0.002 seconds.
+	File format: text (specified as inferred)
+	File size:                 37
+	Bytes of padding:          88
+	Transmission size:        288
+	Initial CRLF newlines:      0
+	Initial LFCR newlines:      0
+	Initial CR   newlines:      0
+	Initial LF   newlines:      3
+	Final   CRLF newlines:      3
+
+% pbpaste
+A:DOWNLOAD HELLO.BAS
+U0
+:3130207072696E74202268656C6C6F223B0D0A3230207072696E74202220776F726C64220D0A0D0A00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000>8001
+% pbpaste | hexdump -C
+00000000  41 3a 44 4f 57 4e 4c 4f  41 44 20 48 45 4c 4c 4f  |A:DOWNLOAD HELLO|
+00000010  2e 42 41 53 0d 0a 55 30  0d 0a 3a 33 31 33 30 32  |.BAS..U0..:31302|
+00000020  30 37 30 37 32 36 39 36  45 37 34 32 30 32 32 36  |07072696E7420226|
+00000030  38 36 35 36 43 36 43 36  46 32 32 33 42 30 44 30  |8656C6C6F223B0D0|
+00000040  41 33 32 33 30 32 30 37  30 37 32 36 39 36 45 37  |A3230207072696E7|
+00000050  34 32 30 32 32 32 30 37  37 36 46 37 32 36 43 36  |4202220776F726C6|
+00000060  34 32 32 30 44 30 41 30  44 30 41 30 30 30 30 30  |4220D0A0D0A00000|
+00000070  30 30 30 30 30 30 30 30  30 30 30 30 30 30 30 30  |0000000000000000|
+*
+00000110  30 30 30 30 30 30 30 30  30 30 30 3e 38 30 30 31  |00000000000>8001|
+00000120
+
+```
+
+Here we see that by using the argument `-p clipboard`, the package was "transmitted" to the clipboard.
+We used the macOS utility `pbpaste` to place the contents of the clipboard into `stdout`, and we piped that output into `hexdump` to view the underlying bytes.
+The result is exactly what we would expect it to be.
