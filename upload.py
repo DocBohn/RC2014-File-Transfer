@@ -217,41 +217,101 @@ def send_string(string: str, destination: Optional[serial.Serial], ms_delay: int
         sleep(ms_delay / 1000.0)
 
 
-def upload_file(original_file: str, target_file: str, destination: Optional[serial.Serial],
-                file_format: FileFormat, transmission_format: TransmissionFormat, ms_delay: int, user_number: int,
-                source_newlines: Iterable[Newline], target_newline: Newline, echo_transmission: bool) -> None:
+def send_file(original_file: str, target_file: str, destination: Optional[serial.Serial],
+              file_format: FileFormat, transmission_format: TransmissionFormat, ms_delay: int, user_number: int,
+              source_newlines: Iterable[Newline], target_newline: Newline, echo_transmission: bool) -> None:
     global statistics
-    if transmission_format == TransmissionFormat.PLAINTEXT:
-        with open(original_file, 'rt') as source:
-            for line in source.readlines():
-                statistics[Statistics.FILE_BYTES] += len(line)  # we are assuming 1 byte per character
-                line = convert_newlines(line, transmission_format, source_newlines, target_newline)
-                send_string(line, destination, ms_delay, echo_transmission, file_format, transmission_format)
-    elif transmission_format == TransmissionFormat.PACKAGE:
-        with open(original_file, 'rb') as source:
-            send_string(f'A:DOWNLOAD {target_file}\r\nU{user_number}\r\n:', destination, ms_delay, echo_transmission)
-            byte_count: int = 0
-            byte_sum: int = 0
-            block_bytes: bytes = source.read(128)
-            while block_bytes:
-                statistics[Statistics.FILE_BYTES] += len(block_bytes)
-                block_string: str = ''.join(f'{byte:02x}'.upper() for byte in block_bytes)
-                if file_format == FileFormat.TEXT:
-                    block_string = convert_newlines(block_string, transmission_format, source_newlines, target_newline)
-                byte_count += len(block_string) // 2
-                byte_sum += functools.reduce(lambda a, b: a + b,
-                                             [int(block_string[i:i + 2], 16) for i in range(0, len(block_string), 2)])
-                send_string(block_string, destination, ms_delay, echo_transmission, file_format, transmission_format)
-                block_bytes = source.read(128)
-            padding_needed: int = 128 - (byte_count % 128)
-            statistics[Statistics.PADDING_BYTES] += padding_needed
-            if padding_needed > 0:
-                byte_count += padding_needed
-                send_string(''.join('00' for _ in range(padding_needed)),
-                            destination, ms_delay, echo_transmission, file_format, transmission_format)
-            send_string(f'>{(byte_count & 0xFF):02x}{(byte_sum & 0xFF):02x}'.upper(), destination, ms_delay, echo_transmission)
-    else:
-        raise ValueError(f'No supported transmission format found in {transmission_format}.')
+    try:
+        if transmission_format == TransmissionFormat.PLAINTEXT:
+            with open(original_file, 'rt') as source:
+                for line in source.readlines():
+                    statistics[Statistics.FILE_BYTES] += len(line)  # we are assuming 1 byte per character
+                    line = convert_newlines(line, transmission_format, source_newlines, target_newline)
+                    send_string(line, destination, ms_delay, echo_transmission, file_format, transmission_format)
+        elif transmission_format == TransmissionFormat.PACKAGE:
+            with open(original_file, 'rb') as source:
+                send_string(f'A:DOWNLOAD {target_file}\r\nU{user_number}\r\n:', destination, ms_delay, echo_transmission)
+                byte_count: int = 0
+                byte_sum: int = 0
+                block_bytes: bytes = source.read(128)
+                while block_bytes:
+                    statistics[Statistics.FILE_BYTES] += len(block_bytes)
+                    block_string: str = ''.join(f'{byte:02x}'.upper() for byte in block_bytes)
+                    if file_format == FileFormat.TEXT:
+                        block_string = convert_newlines(block_string, transmission_format, source_newlines, target_newline)
+                    byte_count += len(block_string) // 2
+                    byte_sum += functools.reduce(lambda a, b: a + b,
+                                                 [int(block_string[i:i + 2], 16) for i in range(0, len(block_string), 2)])
+                    send_string(block_string, destination, ms_delay, echo_transmission, file_format, transmission_format)
+                    block_bytes = source.read(128)
+                padding_needed: int = 128 - (byte_count % 128)
+                statistics[Statistics.PADDING_BYTES] += padding_needed
+                if padding_needed > 0:
+                    byte_count += padding_needed
+                    send_string(''.join('00' for _ in range(padding_needed)),
+                                destination, ms_delay, echo_transmission, file_format, transmission_format)
+                send_string(f'>{(byte_count & 0xFF):02x}{(byte_sum & 0xFF):02x}'.upper(), destination, ms_delay, echo_transmission)
+        else:
+            raise ValueError(f'No supported transmission format found in {transmission_format}.')
+    except FileNotFoundError:
+        print(f'File {original_file} not found.')
+
+
+def send_files(arguments: Arguments, destination: Optional[serial.Serial]) -> None:
+    interfile_delay: float = 1.0
+    file_count: int = len(arguments.files)
+    for file_number, file in enumerate(arguments.files):
+        if file_number > 0:
+            sleep(interfile_delay)
+        print(f'Uploading file {file_number + 1}/{file_count}: {file.original_path} -> {file.target_name}', flush=True)
+        start_time = time()
+        send_file(original_file=file.original_path,
+                  target_file=file.target_name,
+                  destination=destination,
+                  file_format=file.format,
+                  transmission_format=arguments.transmission_format,
+                  ms_delay=arguments.ms_delay,
+                  echo_transmission=arguments.echo_transmission,
+                  source_newlines=arguments.source_newlines,
+                  target_newline=arguments.target_newline,
+                  user_number=arguments.user_number)
+        stop_time = time()
+        sys.stdout.flush()
+        if arguments.serial_port is None:
+            print(f'\nSimulated {arguments.transmission_format} transmission of', end=' ',
+                  file=sys.stderr)
+        else:
+            print(f'\n\n{arguments.transmission_format.capitalize()} transmission of', end=' ',
+                  file=sys.stderr)
+        print(f'{file.target_name}', end=' ',
+              file=sys.stderr)
+        if arguments.serial_port is not None:
+            print(f'to {arguments.serial_port.name}', end=' ',
+                  file=sys.stderr)
+        print(f'completed in {round(stop_time - start_time, 3)} seconds.',
+              file=sys.stderr)
+        print(f'\tFile format: {file.format} '
+              f'(specified as {"inferred" if file.format_inferred else file.format})',
+              file=sys.stderr)
+        print(f'\tFile size:         {str(statistics[Statistics.FILE_BYTES]).rjust(10)}',
+              file=sys.stderr)
+        if arguments.transmission_format == TransmissionFormat.PACKAGE:
+            print(f'\tBytes of padding:  {str(statistics[Statistics.PADDING_BYTES]).rjust(10)}',
+                  file=sys.stderr)
+        print(f'\tTransmission size: {str(statistics[Statistics.TRANSMITTED_BYTES]).rjust(10)}',
+              file=sys.stderr)
+        if file.format == FileFormat.TEXT:
+            print(f'\tInitial CRLF newlines: {str(statistics[Statistics.INITIAL_CRLF_COUNT]).rjust(6)}',
+                  file=sys.stderr)
+            print(f'\tInitial LFCR newlines: {str(statistics[Statistics.INITIAL_LFCR_COUNT]).rjust(6)}',
+                  file=sys.stderr)
+            print(f'\tInitial CR   newlines: {str(statistics[Statistics.INITIAL_CR_COUNT]).rjust(6)}',
+                  file=sys.stderr)
+            print(f'\tInitial LF   newlines: {str(statistics[Statistics.INITIAL_LF_COUNT]).rjust(6)}',
+                  file=sys.stderr)
+            print(f'\tFinal   {arguments.target_newline.value.name.ljust(4)} newlines: {str(statistics[Statistics.FINAL_NEWLINE_COUNT]).rjust(6)}',
+                  file=sys.stderr)
+        print('', file=sys.stderr)
 
 
 def truncate_filename(filename: str) -> str:
@@ -271,7 +331,7 @@ def truncate_filename(filename: str) -> str:
             user_filename_tokens: List[str]
             user_filename_tokens = (input(f'{filename} needs to be renamed to 8.3 format [{proposed_filename}]: ')
                                     .split('.'))
-            if len(user_filename_tokens) == 0:
+            if len(user_filename_tokens) == 0 or user_filename_tokens[0] == '':
                 new_filename = proposed_filename
             elif (1 <= len(user_filename_tokens) <= 2
                   and len(user_filename_tokens[0]) <= 8
@@ -319,7 +379,6 @@ def get_file_format(filename: str, file_format: Optional[str], transmission_form
 
 
 def get_arguments() -> Arguments:
-    # TODO: multiple source files
     # TODO: receive files (trigger https://github.com/RC2014Z80/RC2014/tree/master/CPM/UPLOAD.COM)
     argument_parser = argparse.ArgumentParser(
         prog='upload',
@@ -398,7 +457,6 @@ def get_arguments() -> Arguments:
 def main():
     global statistics
     arguments = get_arguments()
-    start_time = time()
     if arguments.serial_port is not None:
         try:
             with serial.Serial(port=arguments.serial_port.name,
@@ -406,66 +464,12 @@ def main():
                                rtscts=arguments.serial_port.flow_control_enabled,
                                exclusive=arguments.serial_port.exclusive_port_access_mode,
                                timeout=1) as destination:
-                upload_file(original_file=arguments.files[0].original_path,
-                            target_file=arguments.files[0].target_name,
-                            destination=destination,
-                            file_format=arguments.files[0].format,
-                            transmission_format=arguments.transmission_format,
-                            ms_delay=arguments.ms_delay,
-                            echo_transmission=arguments.echo_transmission,
-                            source_newlines=arguments.source_newlines,
-                            target_newline=arguments.target_newline,
-                            user_number=arguments.user_number)
+                send_files(arguments, destination)
         except serial.SerialException as e:
             print(f'Failed to write to {arguments.serial_port.name}: {e}')
             exit(1)
     else:
-        upload_file(original_file=arguments.files[0].original_path,
-                    target_file=arguments.files[0].target_name,
-                    destination=None,
-                    file_format=arguments.files[0].format,
-                    transmission_format=arguments.transmission_format,
-                    ms_delay=arguments.ms_delay,
-                    echo_transmission=arguments.echo_transmission,
-                    source_newlines=arguments.source_newlines,
-                    target_newline=arguments.target_newline,
-                    user_number=arguments.user_number)
-    stop_time = time()
-    sys.stdout.flush()
-    if arguments.serial_port is None:
-        print(f'\n\nSimulated {arguments.transmission_format} transmission of', end=' ',
-              file=sys.stderr)
-    else:
-        print(f'\n\n{arguments.transmission_format.capitalize()} transmission of', end=' ',
-              file=sys.stderr)
-    print(f'{arguments.files[0].target_name}', end=' ',
-          file=sys.stderr)
-    if arguments.serial_port is not None:
-        print(f'to {arguments.serial_port.name}', end=' ',
-              file=sys.stderr)
-    print(f'completed in {round(stop_time - start_time, 3)} seconds.',
-          file=sys.stderr)
-    print(f'\tFile format: {arguments.files[0].format} '
-          f'(specified as {"inferred" if arguments.files[0].format_inferred else arguments.files[0].format})',
-          file=sys.stderr)
-    print(f'\tFile size:         {str(statistics[Statistics.FILE_BYTES]).rjust(10)}',
-          file=sys.stderr)
-    if arguments.transmission_format == TransmissionFormat.PACKAGE:
-        print(f'\tBytes of padding:  {str(statistics[Statistics.PADDING_BYTES]).rjust(10)}',
-              file=sys.stderr)
-    print(f'\tTransmission size: {str(statistics[Statistics.TRANSMITTED_BYTES]).rjust(10)}',
-          file=sys.stderr)
-    if arguments.files[0].format == FileFormat.TEXT:
-        print(f'\tInitial CRLF newlines: {str(statistics[Statistics.INITIAL_CRLF_COUNT]).rjust(6)}',
-              file=sys.stderr)
-        print(f'\tInitial LFCR newlines: {str(statistics[Statistics.INITIAL_LFCR_COUNT]).rjust(6)}',
-              file=sys.stderr)
-        print(f'\tInitial CR   newlines: {str(statistics[Statistics.INITIAL_CR_COUNT]).rjust(6)}',
-              file=sys.stderr)
-        print(f'\tInitial LF   newlines: {str(statistics[Statistics.INITIAL_LF_COUNT]).rjust(6)}',
-              file=sys.stderr)
-        print(f'\tFinal   {arguments.target_newline.value.name.ljust(4)} newlines: {str(statistics[Statistics.FINAL_NEWLINE_COUNT]).rjust(6)}',
-              file=sys.stderr)
+        send_files(arguments, None)
 
 
 if __name__ == '__main__':
