@@ -258,9 +258,20 @@ def send_file(original_file: str, target_file: str, destination: Optional[serial
 
 
 def send_files(arguments: Arguments, destination: Optional[serial.Serial]) -> None:
+    global statistics
     interfile_delay: float = 1.0
     file_count: int = len(arguments.files)
     for file_number, file in enumerate(arguments.files):
+        statistics = {
+            Statistics.FILE_BYTES: 0,
+            Statistics.TRANSMITTED_BYTES: 0,
+            Statistics.PADDING_BYTES: 0,
+            Statistics.INITIAL_CRLF_COUNT: 0,
+            Statistics.INITIAL_LFCR_COUNT: 0,
+            Statistics.INITIAL_CR_COUNT: 0,
+            Statistics.INITIAL_LF_COUNT: 0,
+            Statistics.FINAL_NEWLINE_COUNT: 0,
+        }
         if file_number > 0:
             sleep(interfile_delay)
         print(f'Uploading file {file_number + 1}/{file_count}: {file.original_path} -> {file.target_name}', flush=True)
@@ -278,40 +289,26 @@ def send_files(arguments: Arguments, destination: Optional[serial.Serial]) -> No
         stop_time = time()
         sys.stdout.flush()
         if arguments.serial_port is None:
-            print(f'\nSimulated {arguments.transmission_format} transmission of', end=' ',
-                  file=sys.stderr)
+            print(f'\nSimulated {arguments.transmission_format} transmission of', end=' ')
         else:
-            print(f'\n\n{arguments.transmission_format.capitalize()} transmission of', end=' ',
-                  file=sys.stderr)
-        print(f'{file.target_name}', end=' ',
-              file=sys.stderr)
+            print(f'\n\n{arguments.transmission_format.capitalize()} transmission of', end=' ')
+        print(f'{file.target_name}', end=' ')
         if arguments.serial_port is not None:
-            print(f'to {arguments.serial_port.name}', end=' ',
-                  file=sys.stderr)
-        print(f'completed in {round(stop_time - start_time, 3)} seconds.',
-              file=sys.stderr)
+            print(f'to {arguments.serial_port.name}', end=' ')
+        print(f'({file_number + 1}/{file_count}) completed in {round(stop_time - start_time, 3)} seconds.')
         print(f'\tFile format: {file.format} '
-              f'(specified as {"inferred" if file.format_inferred else file.format})',
-              file=sys.stderr)
-        print(f'\tFile size:         {str(statistics[Statistics.FILE_BYTES]).rjust(10)}',
-              file=sys.stderr)
+              f'(specified as {"inferred" if file.format_inferred else file.format})')
+        print(f'\tFile size:         {str(statistics[Statistics.FILE_BYTES]).rjust(10)}')
         if arguments.transmission_format == TransmissionFormat.PACKAGE:
-            print(f'\tBytes of padding:  {str(statistics[Statistics.PADDING_BYTES]).rjust(10)}',
-                  file=sys.stderr)
-        print(f'\tTransmission size: {str(statistics[Statistics.TRANSMITTED_BYTES]).rjust(10)}',
-              file=sys.stderr)
+            print(f'\tBytes of padding:  {str(statistics[Statistics.PADDING_BYTES]).rjust(10)}')
+        print(f'\tTransmission size: {str(statistics[Statistics.TRANSMITTED_BYTES]).rjust(10)}')
         if file.format == FileFormat.TEXT:
-            print(f'\tInitial CRLF newlines: {str(statistics[Statistics.INITIAL_CRLF_COUNT]).rjust(6)}',
-                  file=sys.stderr)
-            print(f'\tInitial LFCR newlines: {str(statistics[Statistics.INITIAL_LFCR_COUNT]).rjust(6)}',
-                  file=sys.stderr)
-            print(f'\tInitial CR   newlines: {str(statistics[Statistics.INITIAL_CR_COUNT]).rjust(6)}',
-                  file=sys.stderr)
-            print(f'\tInitial LF   newlines: {str(statistics[Statistics.INITIAL_LF_COUNT]).rjust(6)}',
-                  file=sys.stderr)
-            print(f'\tFinal   {arguments.target_newline.value.name.ljust(4)} newlines: {str(statistics[Statistics.FINAL_NEWLINE_COUNT]).rjust(6)}',
-                  file=sys.stderr)
-        print('', file=sys.stderr)
+            print(f'\tInitial CRLF newlines: {str(statistics[Statistics.INITIAL_CRLF_COUNT]).rjust(6)}')
+            print(f'\tInitial LFCR newlines: {str(statistics[Statistics.INITIAL_LFCR_COUNT]).rjust(6)}')
+            print(f'\tInitial CR   newlines: {str(statistics[Statistics.INITIAL_CR_COUNT]).rjust(6)}')
+            print(f'\tInitial LF   newlines: {str(statistics[Statistics.INITIAL_LF_COUNT]).rjust(6)}')
+            print(f'\tFinal   {arguments.target_newline.value.name.ljust(4)} newlines: {str(statistics[Statistics.FINAL_NEWLINE_COUNT]).rjust(6)}')
+        print('', flush=True)
 
 
 def truncate_filename(filename: str) -> str:
@@ -333,7 +330,9 @@ def truncate_filename(filename: str) -> str:
                                     .split('.'))
             if len(user_filename_tokens) == 0 or user_filename_tokens[0] == '':
                 new_filename = proposed_filename
-            elif (1 <= len(user_filename_tokens) <= 2
+            elif len(user_filename_tokens) == 1 and len(user_filename_tokens[0]) <= 8:
+                new_filename = user_filename_tokens[0].upper() + '.' # TODO: I think we can eliminate the '.' but let's double-check
+            elif (len(user_filename_tokens) == 2
                   and len(user_filename_tokens[0]) <= 8
                   and len(user_filename_tokens[1]) <= 3):
                 new_filename = '.'.join(user_filename_tokens).upper()
@@ -380,6 +379,7 @@ def get_file_format(filename: str, file_format: Optional[str], transmission_form
 
 def get_arguments() -> Arguments:
     # TODO: receive files (trigger https://github.com/RC2014Z80/RC2014/tree/master/CPM/UPLOAD.COM)
+    # TODO: what happens if the original file has no extension?
     argument_parser = argparse.ArgumentParser(
         prog='upload',
         description='Upload file to RC2014 or similar retrocomputer'
@@ -412,10 +412,10 @@ def get_arguments() -> Arguments:
     argument_parser.add_argument('-rx', '--receive', action='store_true',
                                  help='(placeholder--currently unused)\nIndicates that the file transfer will be to receive a file or files from the remote computer (default: the file transfer will be to send a file or files to the remote computer).')
     argument_parser.add_argument('--echo', action=argparse.BooleanOptionalAction, default=True,
-                                 help='Cause the transmission to be echoed (or not) to the console (default: echo).')
+                                 help='Cause the transmission to be echoed (or not) to the local computer\'s console (default: echo).')
     argument_parser.add_argument('--source-newlines', type=str, nargs='*',
                                  choices=['CR', 'LF', 'CRLF', 'LFCR', 'system'], default=['system'],
-                                 help='One or more types of newlines to be converted to the destination computer\'s newline (default: %(default)s). '
+                                 help='Zero or more types of newlines to be converted to the destination computer\'s newline (default: %(default)s). '
                                       'An empty set of source-newlines indicates that no newline conversion should take place. '
                                       'When sending a file, \'system\' is the host computer\'s newline; when receiving a file, \'system\' is equivalent to CRLF (under the assumption that the remote computer runs CP/M). '
                                       'This option is applicable only to text files and is ignored for binary files.')
@@ -438,7 +438,7 @@ def get_arguments() -> Arguments:
                     format_overridden=(transmission_format == TransmissionFormat.PLAINTEXT
                                        and arguments.file_format is not None
                                        and arguments.file_format != 'text'))
-               for source_file in arguments.source_file],
+               for source_file in set(arguments.source_file)],
         serial_port=Port(name=arguments.port,
                          flow_control_enabled=arguments.flow_control,
                          exclusive_port_access_mode=arguments.exclusive_port,
@@ -455,7 +455,6 @@ def get_arguments() -> Arguments:
 
 
 def main():
-    global statistics
     arguments = get_arguments()
     if arguments.serial_port is not None:
         try:
