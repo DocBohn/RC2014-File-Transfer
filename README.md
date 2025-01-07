@@ -1,9 +1,12 @@
 # RC2014-Upload
 
-Python script to upload files to an RC2014 (or similar retrocomputers)
+Python program to upload files to an RC2014 (or similar retrocomputers)
 
-`upload.py` can transmit a text file as plaintext (no special encoding), or it can package a text or binary file to a
+`transfer.py` can transmit text files as plaintext (no special encoding), or it can package text or binary files to a
 CP/M computer that has [Grant Searle's `DOWNLOAD.COM`](http://searle.x10host.com/cpm/index.html) on its `A:` drive.
+
+This program can receive a text file as plaintext (no special encoding).
+TODO: receive a package from `UPLOAD.COM`.
 
 The nominal use is with one of [Spencer Owen's RC2014 computers](https://rc2014.co.uk/) or
 a [similar retrocomputer](https://smallcomputercentral.com/).
@@ -14,12 +17,12 @@ the port (with the `-p` option) and the file to be uploaded.
 
 ## Dependence
 
-`upload.py` requires the `pyserial` library and the `pyperclip` library.
+`transfer.py` requires the `pyserial` library and the `pyperclip` library.
 
 ## Usage
 
 ```
-python upload.py [options] source_file [source_file ...]
+python transfer.py [options] source_file [source_file ...]
 ```
 
 ### Options
@@ -31,34 +34,37 @@ python upload.py [options] source_file [source_file ...]
 | `--flow-control`<br>`--no-flow-control`        | Enables/disables hardware flow control.<br>(default: enabled)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `--exclusive-port`<br>`--no-exclusive-port`    | Enables/disables exclusive port access. (Neither shared nor exclusive access are guaranteed.)<br>(default: enabled)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `-b BAUDRATE`<br>`--baud BAUDRATE`             | The baud rate for the serial connection.<br>(default: 115200)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `-d DELAY`<br>`--delay DELAY`                  | The delay (in milliseconds) between characters. This delay shouldn't be necessary if flow control is enabled.<br>(default: 0)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `-d DELAY`<br>`--delay DELAY`                  | The delay (in milliseconds) between characters. This delay shouldn't be necessary if flow control is enabled.<br>(default: 0)<br>Applies only when sending characters to the remote computer.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `-tf FORMAT`<br>`--transmission-format FORMAT` | The transmission format.<ul><li>*package* encodes the file for `DOWNLOAD.COM`.<li>*plaintext* transmits the file without any special encoding and forces the file format to be *text*.</ul>(default: *package*)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| `-ff FORMAT`<br>`--file-format FORMAT`         | The file format.<ul><li>*text* files are assumed to be human-readable files; newlines will be converted from the transmitting computer's newline to the receiving computer's newline (unless specified otherwise).<li>*binary* files are assumed to not be human-readable. No bytes will be added, removed, or changed.</ul>If unspecified, `upload.py` will infer the file type.                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `-ff FORMAT`<br>`--file-format FORMAT`         | The file format.<ul><li>*text* files are assumed to be human-readable files; newlines will be converted from the transmitting computer's newline to the receiving computer's newline (unless specified otherwise).<li>*binary* files are assumed to not be human-readable. No bytes will be added, removed, or changed.</ul>If unspecified, `transfer.py` will infer the file type.                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `-u USERNUMBER`<br>`--user USERNUMBER`         | The CP/M user number.<br>(default: 0)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| `-rx`<br>`--receive`                           | (placeholder, currently unused)<br>Indicates that the file transfer will be to receive a file or files from the remote computer<br>(default: the file transfer will be to send a file or files to the remote computer).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `-rx`<br>`--receive`                           | Indicates that the file transfer will be to receive a file or files from the remote computer<br>(default: the file transfer will be to send a file or files to the remote computer).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `--echo`<br>`--no-echo`                        | Cause the transmission to be echoed (or not) to the local computer's console.<br>(default: echo)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `--source-newlines` [NEWLINE ...]              | Zero or more types of newlines to be converted to the destination computer's newline<ul><li>*CR* -- `'\r'` as used by Apple (6502 and classic Mac), Commodore, TRS-80, etc<li>*CRLF* -- `'\r\n'` as used by CP/M, MS-DOS, Windows, etc<li>*LF* -- `'\n'` as used by Unix (including Linux and modern Mac)<li>*LFCR* -- `'\n\r'` as used by BBC Micro<li>*system* -- use the newline that is used by the transmitting computer<ul><li>This is the host computer's newline when sending a file<li>This is CRLF when receiving a file (under the assumption that the remote computer runs CP/M)</ul><li>An empty set of source-newlines indicates that no newline conversion should take place.</ul>(default: system)<br>`--source-newlines` is applicable only to text files and is ignored for binary files. |
 | `--target-newline` NEWLINE                     | The newline that the source-newlines will be converted to; the choice of newlines is the same as for `--source-newlines`.<br>(default: system)<br>When receiving a file, *system* is the host computer's newline; when sending a file, *system* is equivalent to CRLF (under the assumption that the remote computer runs CP/M).<br>`--target-newline` is applicable only to text files and is ignored for binary files. `--target-newline` is also ignored if the source-newlines is an empty set.                                                                                                                                                                                                                                                                                                         |
 
 ### Omitting the Serial Port
 
-If no serial port is specified, then `upload.py` will simulate the transmission, printing only to the host computer's
+If no serial port is specified, then `transfer.py` will simulate the transmission, printing only to the host computer's
 console.
 
 ### Copying to the Host Computer's Clipboard
 
-If *clipboard* is specified as the "serial port" (`-p clipboard`) then the encoded file will be copied to the host computer's clipboard,
-making it possible for you to paste the encoded file into another application.
-*n.b.*, Only the last file to be "transmitted" to the clipboard will be present on the clipboard.
+If *clipboard* is specified as the "serial port" (`-p clipboard`) then the encoded file will be copied to/from the host
+computer's clipboard, making it possible for you to paste the encoded file into, or copy the encoded file from, another
+application.
+*n.b.*, When sending, only the last file to be "transmitted" to the clipboard will be present on the clipboard.
+When receiving, the same clipboard contents will be "received" and saved to each file.
 
 ### Inferring the File Format
 
-- If you specify the file format using `-ff` or `--file-format` then `upload.py` will use that format, unless...
+- If you specify the file format using `-ff` or `--file-format` then `transfer.py` will use that format, unless...
 - If you specify a *plaintext* transmission (using `-tf plaintext` or `--transmission-format plaintext`) then the file
   format will be set to *text* **even if you set the file format to *binary* using `-ff binary`
   or `--file-format binary`**.
 
-If neither of those cases are at play, then `upload.py` will infer the file type from the file extension if possible or
+If neither of those cases are at play, then `transfer.py` will infer the file type from the file extension if possible
+or
 from the file contents otherwise.
 
 - `.BIN` and `.COM` files are assumed to be *binary*.
@@ -71,18 +77,26 @@ from the file contents otherwise.
     - Forth (`.F`, `.FTH`, `.FS`, `.4TH`)
     - Pascal (`.PAS`)
 - `.BAK` and `.TXT` files are assumed to be *text*.
-- If the file's first kilobyte can be interpreted as valid UTF-8, then the file is assumed to be *text*.
+- If the file is being *sent* to the remote computer, and its first kilobyte can be interpreted as valid ASCII, then the
+  file is assumed to be *text*.
+  - If the file is being *received* from the remote computer, then no such assumption is made. If a text file being
+    received doesn't have an "assumed text" file extension, then consider specifying `-ff text`.
+  - If a text file uses "extended ASCII" (such as 'Latin-1' or pseudographical characters) and doesn't have an "assumed
+    text" file extension, then be sure to specify `-ff text`.
 - Otherwise, the file is assumed to be *binary*.
-
 ### Renaming files
 
-When sending a file from the host computer to the remote computer, if the file's name does not fit in CP/M's 8.3 filename format,
-then `upload.py` will prompt you to provide a name for the file on the remote computer.
+When determining the name for the new copy of a file, all path information will be stripped from original file, 
+leaving only the file's name.
+When sending a file from the host computer to the remote computer, if the file's name does not fit in CP/M's 8.3
+filename format, then `transfer.py` will prompt you to provide a name for the file on the remote computer.
 Simply press the RETURN key to accept the suggested name, or type your preferred file name.
 
 ## Notes with Regard to BASIC
 
-If you load BASIC on the remote computer and then transmit a `.BAS` file as *plaintext* then the program will be entered
+### Sending BASIC files
+
+If you load BASIC on the remote computer and then send a `.BAS` file as *plaintext*, then the program will be entered
 into BASIC just as though you were hand-typing it (though faster and without typographical errors).
 That will work regardless of whether you're using ROM Microsoft BASIC, CP/M Microsoft BASIC, or CP/M BBC BASIC.
 
@@ -91,17 +105,24 @@ format (replacing keywords with opcodes, replacing line number digits with hexad
 optimizations).
 BBC BASIC and Microsoft BASIC save their files in mutually-incompatible formats.
 
-If you leave the remote computer on a CP/M command line and then transmit a `.BAS` file as a *package*, then Microsoft
-BASIC will load the file and run it (unless there's a `CLS` statement; MBASIC treats that as a syntax error, but that's
-easily dealt with).
+If you leave the remote computer on a CP/M command line and then send a `.BAS` file as a *package*, then Microsoft
+BASIC will load the file and run it [^1].
 BBC BASIC, on the other hand, will *not* load the file.
+
+[^1]: Unless there's a `CLS` statement; MBASIC treats that as a syntax error, but that's easily dealt with.
+
+### Receiving BASIC files
+
+[//]: # (TODO: Receiving BASIC files)
 
 ## Examples
 
-### Simulating sending a BASIC program as plaintext
+[//]: # (TODO: re-do with new newlines)
+
+### Simulating sending a text file as plaintext
 
 ```
-% python upload.py -tf plaintext examples/hello.bas 
+% python transfer.py -tf plaintext examples/hello.bas 
 Uploading file 1/1: examples/hello.bas -> HELLO.BAS
 10 print "hello";\r\n
 20 print " world"\r\n
@@ -119,14 +140,15 @@ Simulated plaintext transmission of HELLO.BAS (1/1) completed in 0.001 seconds.
 ```
 
 Here we see that `HELLO.BAS` was (simulated) transmitted without any special encoding.
-The only alteration was replacing the Unix newlines with CP/M newlines, resulting in 3 more bytes being transmitted than were in the original file.
+The only alteration was replacing the Unix newlines with CP/M newlines, resulting in 3 more bytes being transmitted than
+were in the original file.
 (We can also make a sanity check that the number of newlines before and after are the same.)
 Because no port was specified, no actual transmission was made.
 
-### Sending a C program to `DOWNLOAD.COM`
+### Sending a text file to `DOWNLOAD.COM`
 
 ```
-% python upload.py -p /dev/tty.usbmodem02901 examples/hello.c 
+% python transfer.py -p /dev/tty.usbmodem02901 examples/hello.c 
 Uploading file 1/1: examples/hello.c -> HELLO.C
 A:DOWNLOAD HELLO.C\r\n
 U0\r\n
@@ -152,11 +174,15 @@ Package transmission of HELLO.C to /dev/tty.usbmodem02901 (1/1) completed in 0.0
 ```
 
 Here we see that `HELLO.C` was transmitted as a package.
-In the actual transmission, there are no newline characters between the colon and the checksum, nor are there any space characters;
-however, in the console echo, there are spaces between "bytes" for readability, and a newline has been added after each `\n` "byte".
+In the actual transmission, there are no newline characters between the colon and the checksum, nor are there any space
+characters;
+however, in the console echo, there are spaces between "bytes" for readability, and a newline has been added after each
+`\n` "byte".
 
 The transmission size is a bit larger than the original file, but we can see why:
-- The original file was 73 bytes, 6 bytes were added (`\r` characters), and 49 bytes of padding was added to the end, totalling 128 bytes (the sum of the original file, net changes to newlines, and padding should be a multiple of 128)
+
+- The original file was 73 bytes, 6 bytes were added (`\r` characters), and 49 bytes of padding was added to the end,
+  totalling 128 bytes (the sum of the original file, net changes to newlines, and padding should be a multiple of 128)
 - For each byte, two 1-byte characters were transmitted, bringing us to 256 bytes
 - The checksum delimiter and the checksum itself are five bytes (bringing us to 261)
 - "A:DOWNLOAD HELLO.C\r\nU0\r\n:" is 25 1-byte characters, and now the sum is 286
@@ -164,7 +190,7 @@ The transmission size is a bit larger than the original file, but we can see why
 ### Sending a binary file to `DOWNLOAD.COM`
 
 ```
-% python upload.py -p /dev/tty.usbmodem02901 examples/HELLO.COM 
+% python transfer.py -p /dev/tty.usbmodem02901 examples/HELLO.COM 
 Uploading file 1/1: examples/HELLO.COM -> HELLO.COM
 A:DOWNLOAD HELLO.COM\r\n
 U0\r\n
@@ -190,12 +216,13 @@ Package transmission of HELLO.COM to /dev/tty.usbmodem02901 (1/1) completed in 0
 
 Here we see that `HELLO.COM` was transmitted as a package.
 As with `HELLO.C`, spaces and newlines have been added to the console echo for readability
-(though, for a binary file, we don't assume that 0x0A is (part of) a newline, and instead simply print 16 "bytes" per line).
+(though, for a binary file, we don't assume that 0x0A is (part of) a newline, and instead simply print 16 "bytes" per
+line).
 
 ### Sending multiple files, renaming a file, and specifying a non-existent file
 
 ```
-% python upload.py --no-echo examples/hello.c* examples/foo.bar.baz examples/HELLO.COM
+% python transfer.py --no-echo examples/hello.c* examples/foo.bar.baz examples/HELLO.COM
 hello.c.asm needs to be renamed to 8.3 format [HELLO_C.ASM]: hello.asm
 foo.bar.xyzzy needs to be renamed to 8.3 format [FOO_BAR.XYZ]: 
 Uploading file 1/4: examples/hello.c.asm -> HELLO.ASM
@@ -242,7 +269,8 @@ Simulated package transmission of HELLO.C (4/4) completed in 0.001 seconds.
 	Final   CRLF newlines:      6
 ```
 
-Here we see that we used wildcards to specify `hello.c` and `hello.c.asm`, and we also specified `foo.bar.xyzzy` and `HELLO.COM`.
+Here we see that we used wildcards to specify `hello.c` and `hello.c.asm`, and we also specified `foo.bar.xyzzy` and
+`HELLO.COM`.
 The program prompted us to rename `hello.c.asm`, suggesting `HELLO_C.ASM`; we chose a different name.
 The program prompted us to rename `foo.bar.xyzzy`, suggesting `FOO_BAR.XYZ`; we accepted the suggestion.
 The program then iterated over the files, transmitting each in turn -- except for the non-existent `foo.bar.xyzzy`.
@@ -250,7 +278,7 @@ The program then iterated over the files, transmitting each in turn -- except fo
 ### Copying to the clipboard
 
 ```
-% python upload.py -p clipboard examples/hello.bas 
+% python transfer.py -p clipboard examples/hello.bas 
 Uploading file 1/1: examples/hello.bas -> HELLO.BAS
 A:DOWNLOAD HELLO.BAS\r\n
 U0\r\n
@@ -290,5 +318,6 @@ U0
 ```
 
 Here we see that by using the argument `-p clipboard`, the package was "transmitted" to the clipboard.
-We used the macOS utility `pbpaste` to place the contents of the clipboard into `stdout`, and we piped that output into `hexdump` to view the underlying bytes.
+We used the macOS utility `pbpaste` to place the contents of the clipboard into `stdout`, and we piped that output into
+`hexdump` to view the underlying bytes.
 The result is exactly what we would expect it to be.
