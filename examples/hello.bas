@@ -1,3 +1,3 @@
-10 print "hello";
-20 print " world"
+10 PRINT "hello";
+20 PRINT " world"
 

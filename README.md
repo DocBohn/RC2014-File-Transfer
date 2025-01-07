@@ -35,7 +35,7 @@ python transfer.py [options] source_file [source_file ...]
 | `--exclusive-port`<br>`--no-exclusive-port`    | Enables/disables exclusive port access. (Neither shared nor exclusive access are guaranteed.)<br>(default: enabled)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `-b BAUDRATE`<br>`--baud BAUDRATE`             | The baud rate for the serial connection.<br>(default: 115200)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `-d DELAY`<br>`--delay DELAY`                  | The delay (in milliseconds) between characters. This delay shouldn't be necessary if flow control is enabled.<br>(default: 0)<br>Applies only when sending characters to the remote computer.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `-tf FORMAT`<br>`--transmission-format FORMAT` | The transmission format.<ul><li>*package* encodes the file for `DOWNLOAD.COM`.<li>*plaintext* transmits the file without any special encoding and forces the file format to be *text*.</ul>(default: *package*)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `-tf FORMAT`<br>`--transmission-format FORMAT` | The transmission format.<ul><li>*package* encodes the file for `DOWNLOAD.COM` / decodes the file from `UPLOAD.COM`.<li>*cpm-plaintext* uses CP/M commands to send/receive the file without any special encoding, and forces the file format to be *text*.<li>*basic-plaintext* assumes a BASIC editor/interpreter is open, sending/receiving the file accordingly, and forces the file format to be *text*.</ul>(default: *package*)                                                                                                                                                                                                                                                                                                                                                                        |
 | `-ff FORMAT`<br>`--file-format FORMAT`         | The file format.<ul><li>*text* files are assumed to be human-readable files; newlines will be converted from the transmitting computer's newline to the receiving computer's newline (unless specified otherwise).<li>*binary* files are assumed to not be human-readable. No bytes will be added, removed, or changed.</ul>If unspecified, `transfer.py` will infer the file type.                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `-u USERNUMBER`<br>`--user USERNUMBER`         | The CP/M user number.<br>(default: 0)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `-rx`<br>`--receive`                           | Indicates that the file transfer will be to receive a file or files from the remote computer<br>(default: the file transfer will be to send a file or files to the remote computer).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
@@ -48,13 +48,63 @@ python transfer.py [options] source_file [source_file ...]
 If no serial port is specified, then `transfer.py` will simulate the transmission, printing only to the host computer's
 console.
 
-### Copying to the Host Computer's Clipboard
+### Copying to/from the Host Computer's Clipboard
 
 If *clipboard* is specified as the "serial port" (`-p clipboard`) then the encoded file will be copied to/from the host
 computer's clipboard, making it possible for you to paste the encoded file into, or copy the encoded file from, another
 application.
 *n.b.*, When sending, only the last file to be "transmitted" to the clipboard will be present on the clipboard.
 When receiving, the same clipboard contents will be "received" and saved to each file.
+
+### Notes with Regard to BASIC
+
+#### Sending BASIC Files to a BASIC Editor/Interpreter
+
+If you load BASIC on the remote computer and then send a file as *basic-plaintext*, then the program will be
+entered into BASIC just as though you were hand-typing it (though faster and without typographical errors).
+That will work regardless of whether you're using ROM Microsoft BASIC, CP/M Microsoft BASIC, or CP/M BBC BASIC.
+
+If you subsequently save the file from one of the CP/M BASICs, BASIC will save the file in a slightly-compressed
+format (replacing keywords with opcodes, replacing line number digits with hexadecimal values, a few other
+optimizations).
+BBC BASIC and Microsoft BASIC save their files in mutually-incompatible formats.
+
+If you leave the remote computer on a CP/M command line and then send a `.BAS` file as a *package*, then Microsoft
+BASIC will load the file and run it.[^1]<sup>,</sup>[^2]
+BBC BASIC, on the other hand, will *not* load the file.
+
+[^1]: Unless there's a `CLS` statement; CP/M MBASIC treats that as a syntax error, but that's easily dealt with.
+[^2]: Unless there's a `FOR`/`NEXT` loop; ROM MBASIC treats that as a syntax error.
+
+[//]: # (TODO: does ROM MBASIC also treat `CLS` as a syntax error?)
+
+*n.b.*, If you send multiple files to a BASIC Editor/Interpreter, the effect will be as though you had typed each file's
+contents in the order they were sent (which may or may not be the order in which you listed them on the command line).
+
+#### Receiving BASIC Files
+
+If you have a program loaded in a BASIC Editor/Interpreter, then `transfer.py` obtains its contents by using the BASIC
+`LIST` command. *n.b.*, If you list multiple files, then each will have an identical copy of the source code listing.
+
+### Notes with Regard to CP/M
+
+#### Sending/Receiving *cpm-plaintext* Files
+
+When sending a plaintext file to CP/M, the `C:ED.COM` editor is invoked. (***TODO***: what if the file already exists?)
+When receiving a plaintext file from CP/M, the `TYPE` command is invoked.
+
+[//]: # (TODO: What if the file already exists?)
+
+#### Sending/Receiving *package* Files
+
+When sending a package to CP/M, the `A:DOWNLOAD.COM` utility is invoked.
+If the file being packaged is a *text* file, then `transfer.py` will convert the newlines accordingly.
+Regardless of the file format, the file will be padded until its length is a multiple of 128.
+
+When receiving a file from CP/M, the `A:UPLOAD.COM` utility is invoked.
+If the file being packaged is a *text* file, then `transfer.py` will convert the newlines accordingly and remove the padding at the end of the file.
+
+[//]: # (TODO: What if UPLOAD.COM isn't there?)
 
 ### Inferring the File Format
 
@@ -79,45 +129,29 @@ from the file contents otherwise.
 - `.BAK` and `.TXT` files are assumed to be *text*.
 - If the file is being *sent* to the remote computer, and its first kilobyte can be interpreted as valid ASCII, then the
   file is assumed to be *text*.
-  - If the file is being *received* from the remote computer, then no such assumption is made. If a text file being
-    received doesn't have an "assumed text" file extension, then consider specifying `-ff text`.
-  - If a text file uses "extended ASCII" (such as 'Latin-1' or pseudographical characters) and doesn't have an "assumed
-    text" file extension, then be sure to specify `-ff text`.
+    - If the file is being *received* from the remote computer, then no such assumption is made. If a text file being
+      received doesn't have an "assumed text" file extension, then consider specifying `-ff text`.
+    - If a text file uses "extended ASCII" (such as 'Latin-1' or pseudographical characters) and doesn't have an "
+      assumed text" file extension, then be sure to specify `-ff text`.
 - Otherwise, the file is assumed to be *binary*.
-### Renaming files
 
-When determining the name for the new copy of a file, all path information will be stripped from original file, 
+### Renaming Files
+
+When determining the name for the new copy of a file, all path information will be stripped from original file,
 leaving only the file's name.
 When sending a file from the host computer to the remote computer, if the file's name does not fit in CP/M's 8.3
 filename format, then `transfer.py` will prompt you to provide a name for the file on the remote computer.
 Simply press the RETURN key to accept the suggested name, or type your preferred file name.
 
-## Notes with Regard to BASIC
+### Wildcards in File Name
 
-### Sending BASIC files
+***TODO***
 
-If you load BASIC on the remote computer and then send a `.BAS` file as *plaintext*, then the program will be entered
-into BASIC just as though you were hand-typing it (though faster and without typographical errors).
-That will work regardless of whether you're using ROM Microsoft BASIC, CP/M Microsoft BASIC, or CP/M BBC BASIC.
-
-If you subsequently save the file from one of the CP/M BASICs, BASIC will save the file in a slightly-compressed
-format (replacing keywords with opcodes, replacing line number digits with hexadecimal values, a few other
-optimizations).
-BBC BASIC and Microsoft BASIC save their files in mutually-incompatible formats.
-
-If you leave the remote computer on a CP/M command line and then send a `.BAS` file as a *package*, then Microsoft
-BASIC will load the file and run it [^1].
-BBC BASIC, on the other hand, will *not* load the file.
-
-[^1]: Unless there's a `CLS` statement; MBASIC treats that as a syntax error, but that's easily dealt with.
-
-### Receiving BASIC files
-
-[//]: # (TODO: Receiving BASIC files)
+[//]: # (TODO: wildcards in file name)
 
 ## Examples
 
-[//]: # (TODO: re-do with new newlines)
+[//]: # (TODO: re-do examples)
 
 ### Simulating sending a text file as plaintext
 
