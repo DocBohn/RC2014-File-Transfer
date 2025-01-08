@@ -1,12 +1,15 @@
 # RC2014-Upload
 
-Python program to upload files to an RC2014 (or similar retrocomputers)
+Python program to upload files to, and download files from, an RC2014 (or similar retrocomputers).
 
 `transfer.py` can transmit text files as plaintext (no special encoding), or it can package text or binary files to a
-CP/M computer that has [Grant Searle's `DOWNLOAD.COM`](http://searle.x10host.com/cpm/index.html) on its `A:` drive.
+CP/M computer that has [Grant Searle's `DOWNLOAD.COM`](http://searle.x10host.com/cpm/index.html) on its A: drive.
 
-This program can receive a text file as plaintext (no special encoding).
-TODO: receive a package from `UPLOAD.COM`.
+`transfer.py` can receive a text file as plaintext (no special encoding), or it can receive packaged text or binary
+files from a CP/M computer that has
+[Sheila](https://blog.peacockmedia.software/2022/01/uploadcom-for-z80-cpm-writing-utility.html) 
+[Dixon's](https://blog.peacockmedia.software/2022/01/uploadcom-for-z80-cpm-usage.html) 
+[`UPLOAD.COM`](https://github.com/RC2014Z80/RC2014/blob/master/CPM/UPLOAD.COM/README.md) on its A: drive.
 
 The nominal use is with one of [Spencer Owen's RC2014 computers](https://rc2014.co.uk/) or
 a [similar retrocomputer](https://smallcomputercentral.com/).
@@ -73,8 +76,8 @@ If you leave the remote computer on a CP/M command line and then send a `.BAS` f
 BASIC will load the file and run it.[^1]<sup>,</sup>[^2]
 BBC BASIC, on the other hand, will *not* load the file.
 
-[^1]: Unless there's a `CLS` statement; CP/M MBASIC treats that as a syntax error, but that's easily dealt with.
-[^2]: Unless there's a `FOR`/`NEXT` loop; ROM MBASIC treats that as a syntax error.
+[^1]: Unless there's a `CLS` statement; CP/M MS BASIC treats that as a syntax error, but that's easily dealt with.
+[^2]: Unless there's a `FOR`/`NEXT` loop; ROM MS BASIC treats that as a syntax error.
 
 [//]: # (TODO: does ROM MBASIC also treat `CLS` as a syntax error?)
 
@@ -102,8 +105,6 @@ Regardless of the file format, the file will be padded until its length is a mul
 When receiving a file from CP/M, the `A:UPLOAD.COM` utility is invoked.
 If the file being packaged is a *text* file, then `transfer.py` will convert the newlines accordingly and remove the padding at the end of the file.
 
-[//]: # (TODO: What if UPLOAD.COM isn't there?)
-
 ### Inferring the File Format
 
 - If you specify the file format using `-ff` or `--file-format` then `transfer.py` will use that format, unless...
@@ -115,23 +116,33 @@ If neither of those cases are at play, then `transfer.py` will infer the file ty
 or
 from the file contents otherwise.
 
-- `.BIN` and `.COM` files are assumed to be *binary*.
+- `.BIN`, `.COM`, and `.O` files are assumed to be *binary*.
 - Source code is assumed to be *text*.
-    - Assembly (`.ASM`)
-    - Ada (`.ADB`, `.ADS`)
-    - BASIC (`.BAS`)
-    - C (`.C`, `.H`)
-    - FORTRAN (`.F`, `.F77`, `.FOR`)
-    - Forth (`.F`, `.FTH`, `.FS`, `.4TH`)
-    - Pascal (`.PAS`)
-- `.BAK` and `.TXT` files are assumed to be *text*.
+  - Assembly (`.ASM`, `.Z80`)
+  - Ada (`.ADB`, `.ADS`)
+  - BASIC (`.BAS`)
+  - C (`.C`, `.H`)
+  - FORTRAN (`.F`, `.F77`, `.FOR`)
+  - Forth (`.F`, `.FTH`, `.FS`, `.4TH`)
+  - Pascal (`.PAS`)
+- Some compilation products are assumed to be *text*
+  - Intel Hex (`.HEX`, `.IHX`)
+  - Linker & debugger files (`.LIS`, `.LST`, `.MAP`, `.SYM`)
+- Text files are assumed to be *text*
+  - Text (`.TXT`)
+  - Readme (`.ME`)
+  - Text-based data (`.JSON`, `.XML`)
+  - Marked-up text files (`.MD`, `.TEX`)
+- Text editor backup files (`.BAK`) are assumed to be text
 - If the file is being *sent* to the remote computer, and its first kilobyte can be interpreted as valid ASCII, then the
   file is assumed to be *text*.
     - If the file is being *received* from the remote computer, then no such assumption is made. If a text file being
       received doesn't have an "assumed text" file extension, then consider specifying `-ff text`.
-    - If a text file uses "extended ASCII" (such as 'Latin-1' or pseudographical characters) and doesn't have an "
-      assumed text" file extension, then be sure to specify `-ff text`.
+    - If a text file uses "extended ASCII" (such as 'Latin-1' or pseudographical characters) and doesn't have an 
+      "assumed text" file extension, then be sure to specify `-ff text`.
 - Otherwise, the file is assumed to be *binary*.
+
+[//]: # (- Package &#40;`.PKG`&#41; files are assumed to be text)
 
 ### Renaming Files
 
@@ -143,9 +154,19 @@ Simply press the RETURN key to accept the suggested name, or type your preferred
 
 ### Wildcards in File Name
 
-***TODO***
+When sending files, the local computer's shell will expand wildcards in the file name(s), and `transfer.py` will send
+each file in turn.
 
-[//]: # (TODO: wildcards in file name)
+When receiving files, you can specify multiple explicit file names to retrieve; however, wildcard expansion does not
+yet work.
+If a file name with wildcards is in the list of files and is not enclosed in quotation marks, the local computer's shell
+will attempt to expand the wildcards; however, it will match them based on *local* files.
+If you enclose the file name in quotation marks, the file name will be sent to the remote computer for wildcard
+expansion; however:
+- `UPLOAD.COM` expands wildcards, but `TYPE` does not, and
+- `transfer.py` does not (yet) expand the wildcards for saving the resulting files.
+
+Wildcard expansion when receiving files will be an upcoming feature.
 
 ## Examples
 

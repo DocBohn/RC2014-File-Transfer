@@ -10,14 +10,11 @@ This program can transmit text files as plaintext (no special encoding), or it
 can package text or binary files to a CP/M computer that has [Grant Searle's
 `DOWNLOAD.COM`](http://searle.x10host.com/cpm/index.html) on its A: drive.
 
-This program can receive a text file as plaintext (no special encoding).
-TODO: receive a package (trigger https://github.com/RC2014Z80/RC2014/tree/master/CPM/UPLOAD.COM)
-TODO: note that `TYPE` doesn't handle wildcards
-      do we want to give it an assist wrt wildcards? -- yes, local files with glob, remote files with fnmatch
-      if we do, the wildcarded file(s) will need to be quoted
-TODO: should we provide an option to convert spaces to tabs, and/or vice-versa?
-      also: tabs being converted to spaces during reception is probably only a problem for plaintext
-TODO: parameterize ignoring server response
+This program can receive a text file as plaintext (no special encoding), or it
+can receive packaged text or binary files from a CP/M computer that has
+[Sheila](https://blog.peacockmedia.software/2022/01/uploadcom-for-z80-cpm-writing-utility.html)
+[Dixon's](https://blog.peacockmedia.software/2022/01/uploadcom-for-z80-cpm-usage.html)
+[`UPLOAD.COM`](https://github.com/RC2014Z80/RC2014/blob/master/CPM/UPLOAD.COM/README.md) on its A: drive.
 
 The nominal use is with one of [Spencer Owen's RC2014 computers](https://rc2014.co.uk/)
 or a [similar retrocomputer](https://smallcomputercentral.com/).
@@ -25,6 +22,16 @@ or a [similar retrocomputer](https://smallcomputercentral.com/).
 There are a handful of options; however, a typical transmission (115.2 kilobaud,
 file packaged for `DOWNLOAD.COM`) can be achieved by specifying only the port
 (with the `-p` option) and the file to be uploaded.
+
+TODO: note that `TYPE` doesn't handle wildcards
+      do we want to give it an assist wrt wildcards? -- yes, local files with glob, remote files with fnmatch
+      if we do, the wildcarded file(s) will need to be quoted
+TODO: should we provide an option to convert spaces to tabs, and/or vice-versa?
+      also: tabs being converted to spaces during reception is probably only a problem for plaintext
+TODO: parameterize ignoring server response
+TODO: work with SCM
+TODO: what if UPLOAD.COM isn't there?
+TODO: what if the remote file to be downloaded isn't there?
 """
 """
 MIT License
@@ -123,6 +130,9 @@ class Arguments(NamedTuple):
 
 
 CHARACTER_ENCODING: str = 'ascii'
+PADDING_CHARACTERS: FrozenSet[str] = frozenset({'\0', '\x1A'})  # NUL used by rc2014.co.uk packager; SUB used by ED.COM
+PREFERRED_PADDING: str = '\0'
+SERIAL_TIMEOUT_MS: int = 200
 INTERFILE_DELAY_MS: int = 1000
 DEBUG_REMOTE_RESPONSES: bool = False
 
@@ -293,7 +303,6 @@ def receive_cpm_plaintext_file(original_file: str,
                                target_newline: Newline,
                                echo_transmission: bool) -> None:
     message: bytes = b'ignored'
-    buffer: io.StringIO = io.StringIO()
     if source is None:
         send_string(f'USER {user_number}\n', source, ms_delay, echo_transmission)
         send_string(f'TYPE {original_file}\n', source, ms_delay, echo_transmission)
@@ -304,21 +313,20 @@ def receive_cpm_plaintext_file(original_file: str,
     else:   # this only works if we use '\n' instead of '\r\n' (cf., receive_basic_plaintext_file)
         send_cpm_command(f'USER {user_number}\n', source, ms_delay, echo_transmission)
         send_cpm_command(f'TYPE {original_file}\n', source, ms_delay, echo_transmission)
-    file_contents: str = receive_plaintext(source, buffer, message, echo_transmission)
+    file_contents: str = receive_plaintext(source, io.StringIO(), message, echo_transmission)
     if not isinstance(source, serial.Serial):
         file_contents += 'X>' if file_contents[-1] == '\n' else '\nX>'
     # the command line prompt should be at the end of the buffer
     assert (file_contents[-1] == '>' and file_contents[-2].isupper())
-    padding_characters = {'\0', '\x1A'}     # NUL used by rc2014.co.uk packager; SUB used by ED.COM and by transfer.py
     end_of_file: int = -2
     # I suspect there's a '\r\n' between the padding characters and the command line prompt, but we'll consider the possibility that's not the case
-    if file_contents[-3] in padding_characters:
+    if file_contents[-3] in PADDING_CHARACTERS:
         end_of_file = -3
-    if file_contents[-4] in padding_characters:
+    if file_contents[-4] in PADDING_CHARACTERS:
         end_of_file = -4
-    if file_contents[-5] in padding_characters:
+    if file_contents[-5] in PADDING_CHARACTERS:
         end_of_file = -5
-    while file_contents[end_of_file - 1] in padding_characters:
+    while file_contents[end_of_file - 1] in PADDING_CHARACTERS:
         end_of_file -= 1
     if file_contents[:end_of_file].endswith('\r\n\r\n'):
         end_of_file -= 2
@@ -329,17 +337,99 @@ def receive_cpm_plaintext_file(original_file: str,
 def receive_package_file(original_file: str,
                          target_file: str,
                          source: Optional[Union[io.BytesIO, serial.Serial]],
+                         file_format: FileFormat,
                          ms_delay: int,
                          user_number: int,
                          source_newlines: Iterable[Newline],
                          target_newline: Newline,
                          echo_transmission: bool) -> None:
-    print('Soon, but not yet')  # TODO: use A:UPLOAD.COM to receive packaged files
+    message: bytes = b'ignored'
+    buffer: io.StringIO = io.StringIO()
+    if source is None:
+        send_string(f'USER {user_number}\n', source, ms_delay, echo_transmission)
+        send_string(f'A:UPLOAD {original_file}\n', source, ms_delay, echo_transmission)
+        return
+    elif isinstance(source, io.BytesIO):
+        source.write(pyperclip.paste().encode(CHARACTER_ENCODING))
+        source.seek(0)
+        message = source.read(1)
+    else:   # this only with both '\n' and 'r\n' (cf., receive_cpm_plaintext_file)
+        send_cpm_command(f'USER {user_number}\n', source, ms_delay, echo_transmission)
+        send_string(f'A:UPLOAD {original_file}\n', source, ms_delay, echo_transmission)
+        print('[[', end='', flush=True)
+        # Read the first line of the response (echo of the command)
+        while message != b'\n':
+            message = source.read(1)
+            if DEBUG_REMOTE_RESPONSES:
+                echo_character(message.decode(CHARACTER_ENCODING), FileFormat.TEXT)
+            else:
+                print('.', end='', flush=True)
+        # Work our way through one or two newlines (including the '\n' we just consumed)
+        while message in {b'\r', b'\n'}:
+            if DEBUG_REMOTE_RESPONSES:
+                echo_character(message.decode(CHARACTER_ENCODING), FileFormat.TEXT)
+            else:
+                print('.', end='', flush=True)
+            message = source.read(1)
+        print(']]', flush=True)
+    # Is it "Can't find input file$", "Break key pressed$", or "A: DOWNLOAD $"? *OR* are we already at the delimiter?
+    if message != b'A' and message != b':':
+        print(f'Response: {message.decode(CHARACTER_ENCODING)}'
+              f'{receive_plaintext(source, buffer, message, False).splitlines()[0]}', flush=True)
+    else:
+        # 'A'
+        if echo_transmission:
+            echo_character(message.decode(CHARACTER_ENCODING), FileFormat.TEXT)
+        message = source.read(1)    # ':'
+        if echo_transmission:
+            echo_character(message.decode(CHARACTER_ENCODING), FileFormat.TEXT)
+        message = source.read(1)    # 'D'
+        # Get to the initial delimiter
+        while message != b':':
+            if echo_transmission:
+                echo_character(message.decode(CHARACTER_ENCODING), FileFormat.TEXT)
+            message = source.read(1)
+        if echo_transmission:
+            echo_character(message.decode(CHARACTER_ENCODING), FileFormat.TEXT)
+        print()
+        # We are now at the data -- get to the terminal delimiter
+        message = source.read(1)
+        while message != b'>':
+            buffer.write(message.decode(CHARACTER_ENCODING))
+            if echo_transmission:
+                echo_character(message.decode(CHARACTER_ENCODING), file_format, TransmissionFormat.PACKAGE)
+            message = source.read(1)
+        length: int = int(source.read(2).decode(CHARACTER_ENCODING), 16)
+        checksum: int = int(source.read(2).decode(CHARACTER_ENCODING), 16)
+        print(f'>{length:02X}{checksum:02X}', flush=True)
+        # Save the data
+        buffer.seek(0)
+        file_contents: str = buffer.read()
+        file_bytes: List[int] = [int(file_contents[i:i+2], 16) for i in range(0, len(file_contents), 2)]
+        byte_count: int = len(file_bytes) & 0xFF
+        byte_sum: int = sum(file_bytes) & 0xFF
+        if length != byte_count:
+            print(f'Length error! Package reports {length:02X}; Found {byte_count:02X}')
+        elif checksum != byte_sum:
+            print(f'Checksum error! Package reports {checksum:02X}; Found {byte_sum:02X}')
+        else:
+            if file_format == FileFormat.TEXT:
+                file_characters: str = convert_newlines(''.join(chr(byte) for byte in file_bytes),
+                                                        TransmissionFormat.CPM_PLAINTEXT, source_newlines, target_newline)
+                end_of_file: int = 0
+                while file_characters[end_of_file - 1] in PADDING_CHARACTERS:
+                    end_of_file -= 1
+                with open(target_file, 'wt') as file:
+                    file.write(file_characters if end_of_file == 0 else file_characters[:end_of_file])
+            else:
+                with open(target_file, 'wb') as file:
+                    for byte in file_bytes:
+                        file.write(byte.to_bytes(1, byteorder=sys.byteorder))
+    flush_receive_buffer(source)
 
 
 def send_basic_plaintext_file(original_file: str,
                               destination: Optional[Union[io.BytesIO, serial.Serial]],
-                              file_format: FileFormat,
                               ms_delay: int,
                               source_newlines: Iterable[Newline],
                               target_newline: Newline,
@@ -347,13 +437,12 @@ def send_basic_plaintext_file(original_file: str,
     with open(original_file, 'rt') as source:
         for line in source.readlines():
             line = convert_newlines(line, TransmissionFormat.BASIC_PLAINTEXT, source_newlines, target_newline)
-            send_string(line, destination, ms_delay, echo_transmission, file_format, TransmissionFormat.BASIC_PLAINTEXT)
+            send_string(line, destination, ms_delay, echo_transmission, FileFormat.TEXT, TransmissionFormat.BASIC_PLAINTEXT)
 
 
 def send_cpm_plaintext_file(original_file: str,
                             target_file: str,
                             destination: Optional[Union[io.BytesIO, serial.Serial]],
-                            file_format: FileFormat,
                             ms_delay: int,
                             user_number: int,
                             source_newlines: Iterable[Newline],
@@ -369,7 +458,7 @@ def send_cpm_plaintext_file(original_file: str,
         for line in source.readlines():
             # ED.TXT seems to convert '\r' to '\r\n', so '\r\n' becomes '\r\n\n' (cf., receive_basic/cpm_plaintext_file)
             line = convert_newlines(line, TransmissionFormat.CPM_PLAINTEXT, source_newlines, Newline.CR)
-            send_string(line, destination, ms_delay, echo_transmission, file_format, TransmissionFormat.CPM_PLAINTEXT)
+            send_string(line, destination, ms_delay, echo_transmission, FileFormat.TEXT, TransmissionFormat.CPM_PLAINTEXT)
         send_string('\x1AE\n\n', destination, ms_delay, echo_transmission)
         flush_receive_buffer(destination)
         # erase the empty backup file
@@ -399,11 +488,14 @@ def send_package_file(original_file: str,
                                          [int(block_string[i:i + 2], 16) for i in range(0, len(block_string), 2)])
             send_string(block_string, destination, ms_delay, echo_transmission, file_format, TransmissionFormat.PACKAGE)
             block_bytes = source.read(128)
+        # if we need an end of file marker, we need at least one SUB character
         padding_needed: int = 128 - (byte_count % 128)
-        assert 0 < padding_needed <= 128  # needs at least one SUB character to mark the end of the file
+        # but if this CP/M version is happy with file length as a multiple of 128, no marker is needed
+        if PREFERRED_PADDING == '\0' and padding_needed == 128:
+            padding_needed = 0
         byte_count += padding_needed
-        byte_sum += padding_needed * 0x1A
-        send_string(''.join('1A' for _ in range(padding_needed)),
+        byte_sum += padding_needed * ord(PREFERRED_PADDING)
+        send_string(''.join(PREFERRED_PADDING for _ in range(padding_needed)),
                     destination, ms_delay, echo_transmission, file_format, TransmissionFormat.PACKAGE)
         send_string(f'>{(byte_count & 0xFF):02x}{(byte_sum & 0xFF):02x}'.upper(), destination, ms_delay, echo_transmission)
         if destination is not None:
@@ -448,6 +540,7 @@ def receive_files(arguments: Arguments,
                 receive_package_file(original_file=file.original_path,
                                      target_file=file.target_name,
                                      source=source,
+                                     file_format=file.format,
                                      ms_delay=arguments.ms_delay,
                                      user_number=arguments.user_number,
                                      source_newlines=arguments.source_newlines,
@@ -484,7 +577,6 @@ def send_files(arguments: Arguments,
                 case TransmissionFormat.BASIC_PLAINTEXT:
                     send_basic_plaintext_file(original_file=file.original_path,
                                               destination=destination,
-                                              file_format=file.format,
                                               ms_delay=arguments.ms_delay,
                                               echo_transmission=arguments.echo_transmission,
                                               source_newlines=arguments.source_newlines,
@@ -493,7 +585,6 @@ def send_files(arguments: Arguments,
                     send_cpm_plaintext_file(original_file=file.original_path,
                                             target_file=file.target_name,
                                             destination=destination,
-                                            file_format=file.format,
                                             ms_delay=arguments.ms_delay,
                                             echo_transmission=arguments.echo_transmission,
                                             source_newlines=arguments.source_newlines,
@@ -574,15 +665,19 @@ def get_file_format(filename: str,
                     transmission_format: TransmissionFormat,
                     receiving_file: bool) -> FileFormat:
     binary_file_extensions = {'.BIN', '.COM', '.O'}
-    text_file_extensions = {'.ASM',
-                            '.ADB', '.ADS',
-                            '.BAK',
-                            '.BAS',
-                            '.C', '.H',
-                            '.F', '.F77', '.FOR',
-                            '.F', '.FTH', '.FS', '.4TH',
-                            '.PAS',
-                            '.TXT'}     # TODO: .MD?, .ME, .TEX?, .HEX, .Z80, .LST?, .PKG?
+    text_file_extensions = {'.TXT', '.ME',                  # Plain text
+                            '.BAK',                         # Backup from text editor
+                            '.ASM', '.Z80', '.HEX', '.IHX', # Assembly, Intel Hex
+                            '.LIS', '.LST', '.MAP', '.SYM', # Linker & debugger files
+                            '.ADB', '.ADS',                 # Ada
+                            '.BAS',                         # BASIC
+                            '.C', '.H',                     # C
+                            '.F', '.F77', '.FOR',           # FORTRAN
+                            '.F', '.FTH', '.FS', '.4TH',    # Forth
+                            '.PAS',                         # Pascal
+                            '.JSON', '.XML'                 # Text-based data files (n.b., '.DAT' might not be text)
+                            '.MD', '.TEX',                  # Markup files (including markdown)
+                            '.PKG'}                         # We can probably send packages as "basic-plaintext"    # TODO: try it
     if transmission_format in {TransmissionFormat.BASIC_PLAINTEXT, TransmissionFormat.CPM_PLAINTEXT}:
         f_format = FileFormat.TEXT
     elif file_format is not None:
@@ -658,9 +753,11 @@ def get_arguments() -> Arguments:
                                       'This option is applicable only to text files and is ignored for binary files.'
                                       'This option is ignored if the source-newlines is an empty set.')
     arguments = argument_parser.parse_args()
+    # I'm pretty sure the reported type mismatch is a PyCharm problem because the debugger says it's the right type
     # noinspection PyTypeChecker
-    transmission_format: TransmissionFormat = TransmissionFormat[arguments.transmission_format.replace('-', '_').upper()]   # I'm pretty sure the reported type mismatch is a PyCharm problem because the debugger says it's the right type
-    local_system_newline: Newline = {'\r\n': Newline.CRLF, '\n\r': Newline.LFCR, '\r': Newline.CR, '\n': Newline.LF}.get(os.linesep)    # TODO: use only for sending; when receiving, simply use '\n', per https://docs.python.org/3.12/library/os.html#os.linesep
+    transmission_format: TransmissionFormat = TransmissionFormat[arguments.transmission_format.replace('-', '_').upper()]
+    # https://docs.python.org/3.12/library/os.html#os.linesep says to use simply '\n' instead of os.linesep when writing files opened in text mode, but it appears as though a serial connection doesn't count
+    local_system_newline: Newline = {'\r\n': Newline.CRLF, '\n\r': Newline.LFCR, '\r': Newline.CR, '\n': Newline.LF}.get(os.linesep)
     remote_system_newline: Newline = Newline.CRLF
     source_system_newline: Newline = remote_system_newline if arguments.receive else local_system_newline
     target_system_newline: Newline = local_system_newline if arguments.receive else remote_system_newline
@@ -701,7 +798,7 @@ def main():
                                    baudrate=arguments.serial_port.baud_rate,
                                    rtscts=arguments.serial_port.flow_control_enabled,
                                    exclusive=arguments.serial_port.exclusive_port_access_mode,
-                                   timeout=1) as source:
+                                   timeout=SERIAL_TIMEOUT_MS / 1000.0) as source:
                     receive_files(arguments, source)
             except serial.SerialException as e:
                 print(f'Connection failure on {arguments.serial_port.name}: {e}', file=sys.stderr)
@@ -718,7 +815,7 @@ def main():
                                    baudrate=arguments.serial_port.baud_rate,
                                    rtscts=arguments.serial_port.flow_control_enabled,
                                    exclusive=arguments.serial_port.exclusive_port_access_mode,
-                                   timeout=1) as destination:
+                                   timeout=SERIAL_TIMEOUT_MS / 1000.0) as destination:
                     send_files(arguments, destination)
             except serial.SerialException as e:
                 print(f'Connection failure on {arguments.serial_port.name}: {e}', file=sys.stderr)
