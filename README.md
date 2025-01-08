@@ -93,8 +93,6 @@ If you have a program loaded in a BASIC Editor/Interpreter, then `transfer.py` o
 When sending a plaintext file to CP/M, the `C:ED.COM` editor is invoked. (***TODO***: what if the file already exists?)
 When receiving a plaintext file from CP/M, the `TYPE` command is invoked.
 
-[//]: # (TODO: What if the file already exists?)
-
 #### Sending/Receiving *package* Files
 
 When sending a package to CP/M, the `A:DOWNLOAD.COM` utility is invoked.
