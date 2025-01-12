@@ -23,15 +23,11 @@ There are a handful of options; however, a typical transmission (115.2 kilobaud,
 file packaged for `DOWNLOAD.COM`) can be achieved by specifying only the port
 (with the `-p` option) and the file to be uploaded.
 
-TODO: note that `TYPE` doesn't handle wildcards
-      do we want to give it an assist wrt wildcards? -- yes, local files with glob, remote files with fnmatch
-      if we do, the wildcarded file(s) will need to be quoted
 TODO: should we provide an option to convert spaces to tabs, and/or vice-versa?
       also: tabs being converted to spaces during reception is probably only a problem for plaintext
-TODO: parameterize ignoring server response
 TODO: work with SCM
 TODO: what if UPLOAD.COM isn't there?
-TODO: what if the remote file to be downloaded isn't there?
+TODO: handle remote computer not powered up, or not yet booted into CP/M, etc
 """
 """
 MIT License
@@ -59,16 +55,18 @@ SOFTWARE.
 
 import argparse
 import functools
+import glob
 import io
 import os
 import random
+import re
 import sys
 from enum import Enum, StrEnum
 from time import sleep, time
-from typing import Dict, FrozenSet, Iterable, List, NamedTuple, Optional, Union
+from typing import Dict, FrozenSet, Iterable, List, NamedTuple, Optional, Set, Union
 
-import pyperclip    # from the pyperclip package (https://pyperclip.readthedocs.io/)
-import serial       # from the pyserial package  (https://pyserial.readthedocs.io/)
+import pyperclip  # from the pyperclip package (https://pyperclip.readthedocs.io/)
+import serial  # from the pyserial package  (https://pyserial.readthedocs.io/)
 
 
 class TransmissionFormat(StrEnum):
@@ -132,7 +130,8 @@ class Arguments(NamedTuple):
 CHARACTER_ENCODING: str = 'ascii'
 PADDING_CHARACTERS: FrozenSet[str] = frozenset({'\0', '\x1A'})  # NUL used by rc2014.co.uk packager; SUB used by ED.COM
 PREFERRED_PADDING: str = '\0'
-SERIAL_TIMEOUT_MS: int = 200
+PREFERRED_PADDING_HEX: str = '\0'
+SERIAL_TIMEOUT_MS: int = 250
 INTERFILE_DELAY_MS: int = 1000
 DEBUG_REMOTE_RESPONSES: bool = False
 
@@ -226,24 +225,31 @@ def send_string(string: str,
         sleep(ms_delay / 1000.0)
 
 
-def flush_receive_buffer(source: Optional[Union[io.BytesIO, serial.Serial]]) -> None:
+def flush_receive_buffer(source: Optional[Union[io.BytesIO, serial.Serial]], termination_byte: bytes = b'') -> str:
+    if source is None:
+        return ''
     print('[[', end='', flush=True)
-    message: bytes = b'ignored'
-    while source is not None and message != b'':
-        message = source.read(1)
+    buffer: io.StringIO = io.StringIO()
+    message: bytes = source.read(1)
+    while message != termination_byte:
+        buffer.write(message.decode(CHARACTER_ENCODING))
         if DEBUG_REMOTE_RESPONSES:
             echo_character(message.decode(CHARACTER_ENCODING), FileFormat.TEXT)
         else:
             print('.', end='', flush=True)
+        message = source.read(1)
     print(']]', flush=True)
+    buffer.seek(0)
+    return buffer.read()
 
 
 def send_cpm_command(command: str,
                      destination: serial.Serial,
                      ms_delay: int,
-                     echo_transmission) -> None:
+                     echo_transmission: bool,
+                     flush_all_lines: bool = True) -> str:
     send_string(command, destination, ms_delay, echo_transmission)
-    flush_receive_buffer(destination)
+    return flush_receive_buffer(destination, b'' if flush_all_lines else b'\n')
 
 
 def receive_plaintext(source: Optional[Union[io.BytesIO, serial.Serial]],
@@ -303,16 +309,17 @@ def receive_cpm_plaintext_file(original_file: str,
                                target_newline: Newline,
                                echo_transmission: bool) -> None:
     message: bytes = b'ignored'
+    file_contents: str
     if source is None:
-        send_string(f'USER {user_number}\n', source, ms_delay, echo_transmission)
+        # send_string(f'USER {user_number}\n', source, ms_delay, echo_transmission)
         send_string(f'TYPE {original_file}\n', source, ms_delay, echo_transmission)
         return
     elif isinstance(source, io.BytesIO):
         source.write(pyperclip.paste().encode(CHARACTER_ENCODING))
         source.seek(0)
     else:   # this only works if we use '\n' instead of '\r\n' (cf., receive_basic_plaintext_file)
-        send_cpm_command(f'USER {user_number}\n', source, ms_delay, echo_transmission)
-        send_cpm_command(f'TYPE {original_file}\n', source, ms_delay, echo_transmission)
+        # send_cpm_command(f'USER {user_number}\n', source, ms_delay, echo_transmission)
+        send_cpm_command(f'TYPE {original_file}\n', source, ms_delay, echo_transmission, False)
     file_contents: str = receive_plaintext(source, io.StringIO(), message, echo_transmission)
     if not isinstance(source, serial.Serial):
         file_contents += 'X>' if file_contents[-1] == '\n' else '\nX>'
@@ -346,7 +353,7 @@ def receive_package_file(original_file: str,
     message: bytes = b'ignored'
     buffer: io.StringIO = io.StringIO()
     if source is None:
-        send_string(f'USER {user_number}\n', source, ms_delay, echo_transmission)
+        # send_string(f'USER {user_number}\n', source, ms_delay, echo_transmission)
         send_string(f'A:UPLOAD {original_file}\n', source, ms_delay, echo_transmission)
         return
     elif isinstance(source, io.BytesIO):
@@ -354,7 +361,7 @@ def receive_package_file(original_file: str,
         source.seek(0)
         message = source.read(1)
     else:   # this only with both '\n' and 'r\n' (cf., receive_cpm_plaintext_file)
-        send_cpm_command(f'USER {user_number}\n', source, ms_delay, echo_transmission)
+        # send_cpm_command(f'USER {user_number}\n', source, ms_delay, echo_transmission)
         send_string(f'A:UPLOAD {original_file}\n', source, ms_delay, echo_transmission)
         print('[[', end='', flush=True)
         # Read the first line of the response (echo of the command)
@@ -456,7 +463,7 @@ def send_cpm_plaintext_file(original_file: str,
         # capital-I seems to force all-uppercase; lowercase-I seems to preserve the case
         send_string('i\n', destination, ms_delay, echo_transmission)
         for line in source.readlines():
-            # ED.TXT seems to convert '\r' to '\r\n', so '\r\n' becomes '\r\n\n' (cf., receive_basic/cpm_plaintext_file)
+            # ED.COM seems to convert '\r' to '\r\n', so '\r\n' becomes '\r\n\n' (cf., receive_basic/cpm_plaintext_file)
             line = convert_newlines(line, TransmissionFormat.CPM_PLAINTEXT, source_newlines, Newline.CR)
             send_string(line, destination, ms_delay, echo_transmission, FileFormat.TEXT, TransmissionFormat.CPM_PLAINTEXT)
         send_string('\x1AE\n\n', destination, ms_delay, echo_transmission)
@@ -480,7 +487,7 @@ def send_package_file(original_file: str,
         byte_sum: int = 0
         block_bytes: bytes = source.read(128)
         while block_bytes:
-            block_string: str = ''.join(f'{byte:02x}'.upper() for byte in block_bytes)
+            block_string: str = ''.join(f'{byte:02X}' for byte in block_bytes)
             if file_format == FileFormat.TEXT:
                 block_string = convert_newlines(block_string, TransmissionFormat.PACKAGE, source_newlines, target_newline)
             byte_count += len(block_string) // 2
@@ -495,17 +502,17 @@ def send_package_file(original_file: str,
             padding_needed = 0
         byte_count += padding_needed
         byte_sum += padding_needed * ord(PREFERRED_PADDING)
-        send_string(''.join(PREFERRED_PADDING for _ in range(padding_needed)),
+        send_string(''.join(f'{ord(PREFERRED_PADDING):02X}' for _ in range(padding_needed)),
                     destination, ms_delay, echo_transmission, file_format, TransmissionFormat.PACKAGE)
-        send_string(f'>{(byte_count & 0xFF):02x}{(byte_sum & 0xFF):02x}'.upper(), destination, ms_delay, echo_transmission)
+        send_string(f'>{(byte_count & 0xFF):02X}{(byte_sum & 0xFF):02X}', destination, ms_delay, echo_transmission)
         if destination is not None:
-            server_response: str = receive_plaintext(destination, io.StringIO(), b'ignored', False)
+            remote_computer_response: str = receive_plaintext(destination, io.StringIO(), b'ignored', False)
             if DEBUG_REMOTE_RESPONSES:
                 print('[[')
-                print(server_response)
+                print(remote_computer_response)
                 print(']]', flush=True)
             elif isinstance(destination, serial.Serial):
-                print(f'Response: {server_response.splitlines()[-2]}', flush=True)
+                print(f'Response: {' '.join(remote_computer_response.splitlines())}', flush=True)
 
 
 def receive_files(arguments: Arguments,
@@ -623,6 +630,50 @@ def send_files(arguments: Arguments,
               f'(specified as {"inferred" if file.format_inferred else file.format})', flush=True)
 
 
+def expand_wildcards(filespec: str,
+                     remote_connection: Optional[Union[io.BytesIO, serial.Serial]],
+                     transmission_format: TransmissionFormat,
+                     receiving_file: bool,
+                     ms_delay: int,
+                     user_number: int,
+                     echo_transmission: bool) -> Set[str]:
+    # if {'?', '*', '[', ']'}.isdisjoint(filespec):
+    #     return {filespec}
+    if not receiving_file:
+        matching_files = glob.glob(filespec)
+        if not matching_files:
+            print(f'No file matching "{filespec}"')
+        return set(matching_files)
+    if (remote_connection is None
+            or isinstance(remote_connection, io.BytesIO)
+            or transmission_format == TransmissionFormat.BASIC_PLAINTEXT):
+        # make something up
+        segmented_filespec: List[str] = [segment for segment in re.split(r'(\[[^\]]*\])', filespec) if segment]
+        filename: str = ''
+        for segment in segmented_filespec:
+            if segment[0] == '[':
+                filename = filename + segment[1]
+            else:
+                filename = filename + segment.replace('?', 'A').replace('*', '')
+        return {filename}
+    send_cpm_command(f'USER {user_number}\n', remote_connection, ms_delay, echo_transmission)
+    directory_response: List[str] = send_cpm_command(f'DIR {filespec.upper()}\n',
+                                                     remote_connection,
+                                                     ms_delay,
+                                                     echo_transmission).splitlines()[1:-1]
+    if directory_response[-1] == 'No file':
+        print('Response: No file', flush=True)
+        return set()
+    else:
+        filenames: Set[str] = set()
+        for line in directory_response:
+            directory: str = line[0] if len(line) > 0 else ''
+            for filename in line.split(':')[1:]:
+                filenames.add(f'{directory}:{".".join(filename.split())}')
+        return filenames
+
+
+# TODO: warn if (truncated) filename matches another filename
 def truncate_filename(filename: str,
                       receiving_file: bool) -> str:
     new_filename: str = ''
@@ -634,9 +685,9 @@ def truncate_filename(filename: str,
     else:
         _, filename = os.path.split(filename)
         name, extension = os.path.splitext(filename)
-        name = name.replace('.', '_')
+        name = name.replace('.', '-')
         if len(name) > 8:
-            name = name[:8].rstrip('_')
+            name = name[:8].rstrip('-')
         if len(extension) > 4:
             extension = extension[:4]
         proposed_filename: str = f'{name}{extension}'.upper()
@@ -661,7 +712,7 @@ def truncate_filename(filename: str,
 
 
 def get_file_format(filename: str,
-                    file_format: Optional[str],
+                    specified_file_format: Optional[FileFormat],
                     transmission_format: TransmissionFormat,
                     receiving_file: bool) -> FileFormat:
     binary_file_extensions = {'.BIN', '.COM', '.O'}
@@ -677,31 +728,52 @@ def get_file_format(filename: str,
                             '.PAS',                         # Pascal
                             '.JSON', '.XML'                 # Text-based data files (n.b., '.DAT' might not be text)
                             '.MD', '.TEX',                  # Markup files (including markdown)
-                            '.PKG'}                         # We can probably send packages as "basic-plaintext"    # TODO: try it
+                            '.PKG'}                         # We can send packages as "basic-plaintext"
     if transmission_format in {TransmissionFormat.BASIC_PLAINTEXT, TransmissionFormat.CPM_PLAINTEXT}:
-        f_format = FileFormat.TEXT
-    elif file_format is not None:
-        f_format = FileFormat(file_format)
-    elif any(filename.upper().endswith(extension.upper()) for extension in text_file_extensions):
-        f_format = FileFormat.TEXT
-    elif any(filename.upper().endswith(extension.upper()) for extension in binary_file_extensions):
-        f_format = FileFormat.BINARY
-    elif receiving_file:
-        f_format = FileFormat.BINARY    # The worst that'll happen is that we have '\r\n' when we only need '\n', and there'll be padding characters at the end of the file
-    else:
-        try:
-            with open(filename, 'rb') as file:
-                first_kilobyte: bytes = file.read(1024)
-                first_kilobyte.decode(CHARACTER_ENCODING)
-                # if the first KB can be decoded as text, then it's probably text
-                f_format = FileFormat.TEXT
-        except UnicodeDecodeError:
-            f_format = FileFormat.BINARY
-        except FileNotFoundError:
-            # if the file doesn't exist, then the format doesn't matter
-            # (the absence of the file is handled elsewhere)
-            f_format = FileFormat.BINARY
-    return f_format
+        return FileFormat.TEXT
+    if specified_file_format is not None:
+        return specified_file_format
+    if any(filename.upper().endswith(extension.upper()) for extension in text_file_extensions):
+        return FileFormat.TEXT
+    if any(filename.upper().endswith(extension.upper()) for extension in binary_file_extensions):
+        return FileFormat.BINARY
+    if receiving_file:
+        return FileFormat.BINARY    # The worst that'll happen is that we have '\r\n' when we only need '\n', and there'll be padding characters at the end of the file
+    file_format: FileFormat
+    try:
+        with open(filename, 'rb') as file:
+            first_kilobyte: bytes = file.read(1024)
+            first_kilobyte.decode(CHARACTER_ENCODING)
+            # if the first KB can be decoded as text, then it's probably text
+            file_format = FileFormat.TEXT
+    except UnicodeDecodeError:
+        file_format = FileFormat.BINARY
+    except FileNotFoundError:
+        # if the file doesn't exist, then the format doesn't matter
+        # (the absence of the file is handled elsewhere)
+        file_format = FileFormat.BINARY
+    return file_format
+
+
+def populate_file_specs(file: File,
+                        filenames: Iterable[str],
+                        transmission_format: TransmissionFormat,
+                        receiving_file: bool) -> List[File]:
+    updated_files: List[File] = []
+    for filename in filenames:
+        target_name: str = truncate_filename(filename, receiving_file)
+        actual_format: FileFormat = get_file_format(target_name,
+                                                    file.format,
+                                                    transmission_format,
+                                                    receiving_file)
+        updated_files.append(File(
+            original_path=filename,
+            target_name=target_name,
+            format=actual_format,
+            format_inferred=(file.format is None),
+            format_overridden=file.format is not None and file.format != actual_format
+        ))
+    return updated_files
 
 
 def get_arguments() -> Arguments:
@@ -763,12 +835,10 @@ def get_arguments() -> Arguments:
     target_system_newline: Newline = local_system_newline if arguments.receive else remote_system_newline
     return Arguments(
         files=[File(original_path=source_file,
-                    target_name=truncate_filename(source_file, arguments.receive),
-                    format=get_file_format(source_file, arguments.file_format, transmission_format, arguments.receive),
-                    format_inferred=(arguments.file_format is None),
-                    format_overridden=(transmission_format in {TransmissionFormat.BASIC_PLAINTEXT, TransmissionFormat.CPM_PLAINTEXT}
-                                       and arguments.file_format is not None
-                                       and arguments.file_format != 'text'))
+                    target_name='',                                                                 # placeholder
+                    format=FileFormat(arguments.file_format) if arguments.file_format else None,    # placeholder
+                    format_inferred=False,                                                          # placeholder
+                    format_overridden=False)                                                        # placeholder
                for source_file in set(arguments.source_file)],
         serial_port=Port(name=arguments.port,
                          flow_control_enabled=arguments.flow_control,
@@ -786,40 +856,110 @@ def get_arguments() -> Arguments:
 
 def main():
     arguments = get_arguments()
-    if arguments.receive:
-        if arguments.serial_port is None:
+    complete_files: List[File] = []
+    if arguments.serial_port is None:
+        for file in arguments.files:
+            filenames: Set[str] = expand_wildcards(file.original_path,
+                                                   None,
+                                                   arguments.transmission_format,
+                                                   arguments.receive,
+                                                   arguments.ms_delay,
+                                                   arguments.user_number,
+                                                   arguments.echo_transmission)
+            complete_files.extend(
+                populate_file_specs(file, filenames, arguments.transmission_format, arguments.receive))
+        arguments = Arguments(
+            files=complete_files,
+            serial_port=arguments.serial_port,
+            ms_delay=arguments.ms_delay,
+            transmission_format=arguments.transmission_format,
+            source_newlines=arguments.source_newlines,
+            target_newline=arguments.target_newline,
+            user_number=arguments.user_number,
+            echo_transmission=arguments.echo_transmission,
+            receive=arguments.receive
+        )
+        if arguments.receive:
             receive_files(arguments, None)
-        elif arguments.serial_port.name.lower() == 'clipboard':
-            with io.BytesIO() as buffer:
-                receive_files(arguments, buffer)
         else:
-            try:
-                with serial.Serial(port=arguments.serial_port.name,
-                                   baudrate=arguments.serial_port.baud_rate,
-                                   rtscts=arguments.serial_port.flow_control_enabled,
-                                   exclusive=arguments.serial_port.exclusive_port_access_mode,
-                                   timeout=SERIAL_TIMEOUT_MS / 1000.0) as source:
-                    receive_files(arguments, source)
-            except serial.SerialException as e:
-                print(f'Connection failure on {arguments.serial_port.name}: {e}', file=sys.stderr)
-                exit(1)
-    else:
-        if arguments.serial_port is None:
             send_files(arguments, None)
-        elif arguments.serial_port.name.lower() == 'clipboard':
-            with io.BytesIO() as buffer:
-                send_files(arguments, buffer)
-        else:
-            try:
-                with serial.Serial(port=arguments.serial_port.name,
-                                   baudrate=arguments.serial_port.baud_rate,
-                                   rtscts=arguments.serial_port.flow_control_enabled,
-                                   exclusive=arguments.serial_port.exclusive_port_access_mode,
-                                   timeout=SERIAL_TIMEOUT_MS / 1000.0) as destination:
+    else:
+        try:
+            connection: Union[io.BytesIO, serial.Serial] = \
+                io.BytesIO() if arguments.serial_port.name.lower() == 'clipboard' \
+                    else serial.Serial(port=arguments.serial_port.name,
+                                       baudrate=arguments.serial_port.baud_rate,
+                                       rtscts=arguments.serial_port.flow_control_enabled,
+                                       exclusive=arguments.serial_port.exclusive_port_access_mode,
+                                       timeout=SERIAL_TIMEOUT_MS / 1000.0)
+            for file in arguments.files:
+                filenames: Set[str] = expand_wildcards(file.original_path,
+                                                       connection,
+                                                       arguments.transmission_format,
+                                                       arguments.receive,
+                                                       arguments.ms_delay,
+                                                       arguments.user_number,
+                                                       arguments.echo_transmission)
+                complete_files.extend(populate_file_specs(file, filenames, arguments.transmission_format, arguments.receive))
+            arguments = Arguments(
+                files = complete_files,
+                serial_port = arguments.serial_port,
+                ms_delay = arguments.ms_delay,
+                transmission_format = arguments.transmission_format,
+                source_newlines = arguments.source_newlines,
+                target_newline = arguments.target_newline,
+                user_number = arguments.user_number,
+                echo_transmission = arguments.echo_transmission,
+                receive = arguments.receive
+            )
+            if arguments.receive:
+                with connection as source:
+                    receive_files(arguments, source)
+            else:
+                with connection as destination:
                     send_files(arguments, destination)
-            except serial.SerialException as e:
-                print(f'Connection failure on {arguments.serial_port.name}: {e}', file=sys.stderr)
-                exit(1)
+        except serial.SerialException as e:
+            print(f'Connection failure on {arguments.serial_port.name}: {e}', file=sys.stderr)
+            exit(1)
+
+
+
+    # arguments.files = process_filenames(arguments)
+
+    # if arguments.receive:
+    #     if arguments.serial_port is None:
+    #         receive_files(arguments, None)
+    #     elif arguments.serial_port.name.lower() == 'clipboard':
+    #         with io.BytesIO() as buffer:
+    #             receive_files(arguments, buffer)
+    #     else:
+    #         try:
+    #             with serial.Serial(port=arguments.serial_port.name,
+    #                                baudrate=arguments.serial_port.baud_rate,
+    #                                rtscts=arguments.serial_port.flow_control_enabled,
+    #                                exclusive=arguments.serial_port.exclusive_port_access_mode,
+    #                                timeout=SERIAL_TIMEOUT_MS / 1000.0) as source:
+    #                 receive_files(arguments, source)
+    #         except serial.SerialException as e:
+    #             print(f'Connection failure on {arguments.serial_port.name}: {e}', file=sys.stderr)
+    #             exit(1)
+    # else:
+    #     if arguments.serial_port is None:
+    #         send_files(arguments, None)
+    #     elif arguments.serial_port.name.lower() == 'clipboard':
+    #         with io.BytesIO() as buffer:
+    #             send_files(arguments, buffer)
+    #     else:
+    #         try:
+    #             with serial.Serial(port=arguments.serial_port.name,
+    #                                baudrate=arguments.serial_port.baud_rate,
+    #                                rtscts=arguments.serial_port.flow_control_enabled,
+    #                                exclusive=arguments.serial_port.exclusive_port_access_mode,
+    #                                timeout=SERIAL_TIMEOUT_MS / 1000.0) as destination:
+    #                 send_files(arguments, destination)
+    #         except serial.SerialException as e:
+    #             print(f'Connection failure on {arguments.serial_port.name}: {e}', file=sys.stderr)
+    #             exit(1)
 
 
 if __name__ == '__main__':
