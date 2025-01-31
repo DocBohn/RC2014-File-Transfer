@@ -7,8 +7,8 @@ CP/M computer that has [Grant Searle's `DOWNLOAD.COM`](http://searle.x10host.com
 
 `transfer.py` can receive a text file as plaintext (no special encoding), or it can receive packaged text or binary
 files from a CP/M computer that has
-[Sheila](https://blog.peacockmedia.software/2022/01/uploadcom-for-z80-cpm-writing-utility.html) 
-[Dixon's](https://blog.peacockmedia.software/2022/01/uploadcom-for-z80-cpm-usage.html) 
+[Shirley](https://blog.peacockmedia.software/2022/01/uploadcom-for-z80-cpm-writing-utility.html) 
+[Knott's](https://blog.peacockmedia.software/2022/01/uploadcom-for-z80-cpm-usage.html) 
 [`UPLOAD.COM`](https://github.com/RC2014Z80/RC2014/blob/master/CPM/UPLOAD.COM/README.md) on its A: drive.
 
 The nominal use is with one of [Spencer Owen's RC2014 computers](https://rc2014.co.uk/) or
@@ -131,7 +131,7 @@ from the file contents otherwise.
 - Text files are assumed to be *text*
   - Text (`.TXT`)
   - Readme (`.ME`)
-  - Text-based data (`.JSON`, `.XML`)
+  - Text-based data (`.CSV`, `.JSON`, `.XML`)
   - Marked-up text files (`.MD`, `.TEX`)
 - Text editor backup files (`.BAK`) are assumed to be text
 - Package (`.PKG`) files are assumed to be text

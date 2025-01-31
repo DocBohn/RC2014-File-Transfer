@@ -340,7 +340,7 @@ def receive_cpm_plaintext_file(original_file: str,
     with open(target_file, 'wt') as file:
         file.write(convert_newlines(file_contents[:end_of_file], TransmissionFormat.CPM_PLAINTEXT, source_newlines, target_newline))
 
-
+# TODO: if not echoing, don't '...' for the full file, just the "response" (including possibly "A:UPLOAD?" -- though that should be written out)
 def receive_package_file(original_file: str,
                          target_file: str,
                          source: Optional[Union[io.BytesIO, serial.Serial]],
@@ -716,19 +716,19 @@ def get_file_format(filename: str,
                     transmission_format: TransmissionFormat,
                     receiving_file: bool) -> FileFormat:
     binary_file_extensions = {'.BIN', '.COM', '.O'}
-    text_file_extensions = {'.TXT', '.ME',                  # Plain text
-                            '.BAK',                         # Backup from text editor
-                            '.ASM', '.Z80', '.HEX', '.IHX', # Assembly, Intel Hex
-                            '.LIS', '.LST', '.MAP', '.SYM', # Linker & debugger files
-                            '.ADB', '.ADS',                 # Ada
-                            '.BAS',                         # BASIC
-                            '.C', '.H',                     # C
-                            '.F', '.F77', '.FOR',           # FORTRAN
-                            '.F', '.FTH', '.FS', '.4TH',    # Forth
-                            '.PAS',                         # Pascal
-                            '.JSON', '.XML'                 # Text-based data files (n.b., '.DAT' might not be text)
-                            '.MD', '.TEX',                  # Markup files (including markdown)
-                            '.PKG'}                         # We can send packages as "basic-plaintext"
+    text_file_extensions   = {'.TXT', '.ME',                    # Plain text
+                              '.BAK',                           # Backup from text editor
+                              '.ASM', '.Z80', '.HEX', '.IHX',   # Assembly, Intel Hex
+                              '.LIS', '.LST', '.MAP', '.SYM',   # Linker & debugger files
+                              '.ADB', '.ADS',                   # Ada
+                              '.BAS',                           # BASIC
+                              '.C', '.H',                       # C
+                              '.F', '.F77', '.FOR',             # FORTRAN
+                              '.F', '.FTH', '.FS', '.4TH',      # Forth
+                              '.PAS',                           # Pascal
+                              '.CSV', '.JSON', '.XML'           # Text-based data files (n.b., '.DAT' might not be text)
+                              '.MD', '.TEX',                    # Markup files (including markdown)
+                              '.PKG'}                           # We can send packages as "basic-plaintext"
     if transmission_format in {TransmissionFormat.BASIC_PLAINTEXT, TransmissionFormat.CPM_PLAINTEXT}:
         return FileFormat.TEXT
     if specified_file_format is not None:
